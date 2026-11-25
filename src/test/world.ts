@@ -1,5 +1,5 @@
 import { KeyRing, SoftwareSigner } from "@hostry/client-core";
-import { FakeNode } from "@hostry/client-core/testkit/fake-node";
+import { FakeNode } from "@hostry/client-core/testing";
 import { ensureDayOpen } from "../data/trading/orders";
 import { OUTLET_STREAM, createRuntime, type Runtime, type RuntimeOptions } from "../runtime";
 import { TENANT_ID } from "../data/seed";

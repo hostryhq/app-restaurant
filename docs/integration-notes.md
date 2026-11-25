@@ -9,7 +9,7 @@ What this app is wired to, what is still stood in for, and what client-core and 
 | Sync engine (`SyncEngine`, `SyncRunner`, series allocator), `EngineOpWriter`, `createSyncPort`, intent registry, restaurant entity schemas | client-core `feat/phase2-integration` (client-core PR 5) | `src/runtime.ts` builds `new EngineOpWriter(engine, { streams })`, `createSyncPort(runner, engine)`, sets `engine.session` on every sign-in and sign-out |
 | Tax engine, catalog, documents, printing, in-memory store, device fakes | same branch | imported as `@hostry/client-core` (`link:../client-core`) |
 | POS, KDS, shift components | ui-kit `feat/phase2-components` | imported as `@hostry/ui-kit` (`link:../ui-kit`) |
-| Sync simulator (`FakeNode` hub and cloud) | client-core `src/sync/testkit` (not in the published build) | tests only, through a vitest alias and a `tsconfig` path to the sibling's sources |
+| Sync simulator (`FakeNode` hub and cloud) | client-core `@hostry/client-core/testing` | tests only |
 
 CI pins `ui-kit@feat/phase2-components` and `client-core@feat/phase2-integration`. The stand-ins `LocalOpWriter` and `SyncSim` are gone.
 
@@ -24,12 +24,12 @@ How the app sits on the engine:
 - **Storage.** The browser build opens `InMemoryStore.open(tenant, IndexedDbPersistence)` (one database per device kind) and seeds an empty one. The signer is regenerated on load (`SoftwareSigner`), which is fine with no upstream; a durable device key needs the shell's keystore (ADR-0005 A1, not built).
 - **Contract check.** Every op is checked against its intent before it is recorded. This caught builders that wrote fields outside the entity files and entities outside an intent; they were fixed rather than the check relaxed.
 
-## Defects and gaps found in client-core (not fixed here; the clone is read-only)
+## Defects found in client-core (fixed in `feat/phase2-integration`)
 
-1. **`rank` mutations are ignored on entity-level rank entities** (`seating`, `shift`, `business_day`, `kot_line`). The intent contract lists kind `rank` for them (`seating[rank]`, `shift[rank]`, `kot_line[rank]`, `business_day[rank]`), but `sync/apply.ts` case `"rank"` accepts only `insert` and `set`, so a table never closes, a shift never ends and a KDS item never advances. The runtime writer validates on the contract's kinds and then sends those mutations as `set` (`rankAsSet` in `runtime.ts`, marked WORKAROUND). Fix in `apply.ts` (accept `rank` there as it already does for `mixed`), then delete `rankAsSet`. Note the wire carries `set` meanwhile; svc-sync should treat both the same.
-2. **`engine.rows()` and `store.list()` hide tombstoned rows, and a `set` on a row that has no candidates marks it deleted.** A row put straight into the store (no op) disappears on its first `set`. The app avoids it by seeding through an op. Direct `put` of lww rows is not a supported way to load configuration.
-3. **The sync simulator is not importable from a published build** (`tsconfig.build.json` excludes `testkit`). An app test needs the sibling's sources. Suggest a `@hostry/client-core/testkit` export, built separately.
-4. **`ids`:** `monotonicIds` (`src/data/ids.ts`) is the app's UUIDv7 with a counter in `rand_a`, passed to the engine as `newId`, so rows created in one millisecond sort in creation order. client-core `uuidv7` is not monotonic and the screens sort by id. Suggest adopting it.
+1. **`rank` mutations** on `seating`, `shift`, `business_day`, `kot_line` are now applied (forward only). The `rankAsSet` workaround is removed.
+2. **Rows put straight into the store** now survive their first `set` or `del` (adopted with the lowest stamp). The app still seeds the demo configuration as one op (`seed.demo`), because a direct `put` is local only and other devices would not get it.
+3. **Sync simulator** is exported as `@hostry/client-core/testing`; the vitest alias and tsconfig path are gone.
+4. **`ids`:** `monotonicIds` (`src/data/ids.ts`) is the app's UUIDv7 with a counter in `rand_a`, passed to the engine as `newId`, so rows created in one millisecond sort in creation order. client-core `uuidv7` is not monotonic and the screens sort by id. Suggest adopting it (still open).
 
 ADR items still open from client-core's notes: op envelope with several document numbers (`docs`; svc-sync reads only `doc`); shape of the op's `pii` object (the builders still write customer name and phone into the op body); `op_too_large` is not enforced before recording; `session.open` is not recorded, so `sid` is the PIN session id, not a `session.open` op id (ADR-0005).
 
@@ -45,10 +45,9 @@ ADR items still open from client-core's notes: op envelope with several document
 
 `StubIdentity` implements `IdentityPort`: tap-your-name PIN sign-in from an offline pack, 5-wrong delay and 10-wrong lock (`src/domain/pin-guard.ts`), own-PIN action proof, manager approval on the same device with an approval id (valid two minutes, approver differs from requester). `IdentityPort` extends client-core's `PinLogin` (`members`, `signOut`; `Member` extends `MemberSummary`) and `asPinLogin()` gives the throwing `signIn` that interface has; `Runtime.sessions` is a client-core `SessionStore`. Role to permission templates in `identity-stub.ts` are assumptions for ADR-0005 role templates and the security review. Demo PINs are fixtures (1111, 2222, 3333, 4444), not secrets. The action `proof` is not stamped on ops yet.
 
-## ui-kit gaps (ui-kit not touched; both need a ui-kit commit)
+## ui-kit
 
-- **`PinPad` is fixed length** (default 4) and submits at that length; the design says at least 4 digits, 6 for managers. Needs `minLength`/`maxLength` with a submit on Enter or an OK key. The demo uses 4 digits for everyone. Not trivial (a behaviour change with its own tests), so not patched.
-- **Toast dismiss button has no `data-testid`** (`Toast.tsx`, the `Button` after the message). One line: `data-testid="toast-dismiss"`. The app's testid test allow-lists it until ui-kit has it.
+`PinPad` takes `length` 4 to 6 and submits early on Enter or OK (at least 4 digits). The demo still uses 4 digits for everyone; managers can move to 6 when ADR-0005 role templates say so. The toast dismiss button has `data-testid="toast-dismiss"` and the testid test no longer allow-lists it.
 
 ## Printing
 

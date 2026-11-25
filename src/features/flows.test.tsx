@@ -181,9 +181,7 @@ describe("approval, permissions and lock", () => {
     const ui = await mountApp({ signedIn: "Meena" });
     await find("counter-screen");
     await ui.tap("item-12");
-    // Known ui-kit gap: the toast dismiss button has no data-testid (reported in docs/integration-notes.md).
-    const gaps = missingTestIds().filter((g) => g !== "button.hy-btn:×");
-    expect(gaps).toEqual([]);
+    expect(missingTestIds()).toEqual([]);
   });
 });
 

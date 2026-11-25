@@ -7,7 +7,6 @@ import {
   SyncRunner,
   createSyncPort,
   restaurantRegistry,
-  restaurantSchemas,
   type LocalStore,
   type SealVerifier,
   type SeriesGrant,
@@ -98,21 +97,6 @@ const PROVENANCE: Record<string, { actor?: string; at?: string }> = {
   check_present: { at: "presented_at" },
 };
 
-/**
- * WORKAROUND, remove when client-core accepts it. The intent contract says an entity-level `rank` entity (seating, shift,
- * business_day, kot_line) moves with a `rank` mutation, but the engine's apply ignores kind `rank` there and takes only
- * `insert` and `set` (client-core sync/apply.ts, case "rank"), so a table would never close and a shift never end. The writer
- * validates first (on the contract's kinds), then this turns those mutations into `set`, which the engine applies as
- * forward-only. Reported in docs/integration-notes.md.
- */
-const RANK_ENTITIES = new Set(restaurantSchemas().filter((s) => s.policy === "rank").map((s) => s.name));
-function rankAsSet(engine: SyncEngine): SyncEngine {
-  return {
-    record: (spec: RecordSpec) =>
-      engine.record({ ...spec, build: (c) => spec.build(c).map((m) => (m.k === "rank" && RANK_ENTITIES.has(m.e) ? { ...m, k: "set" as const } : m)) }),
-  } as unknown as SyncEngine;
-}
-
 const DEVICE_KINDS: Record<Runtime["deviceKind"], string> = { pos: "pos", waiter: "waiter", kds: "kds" };
 
 /** Offline-pack series grants of one billing device: its sale series and a credit-note series. */
@@ -177,7 +161,7 @@ export async function createRuntime(o: RuntimeOptions = {}): Promise<Runtime> {
     onError: () => undefined, // offline is the normal state; the status says so
   });
   const sync = createSyncPort(runner, engine);
-  const engineWriter = new EngineOpWriter(rankAsSet(engine), { streams: { brand: OUTLET_STREAM, tenant: OUTLET_STREAM } });
+  const engineWriter = new EngineOpWriter(engine, { streams: { brand: OUTLET_STREAM, tenant: OUTLET_STREAM } });
   const autoSync = o.autoSync ?? false;
   const writer: OpWriter = {
     async record(spec: RecordSpec) {
