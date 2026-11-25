@@ -23,12 +23,12 @@ jobs:
       # installs and builds them, then installs this repo. The siblings are pinned to the branches this app needs because their
       # default branch does not hold the Phase 2 work yet:
       #   ui-kit      feat/phase2-components  (POS, KDS and shift components)
-      #   client-core feat/phase2-domain      (tax, catalog and documents; includes feat/phase2-printing)
-      # The sync engine (client-core feat/phase1-sync) is a separate line with no common tip, so the app codes to its
-      # interfaces (docs/integration-notes.md). When those branches reach main, drop the @refs.
+      #   client-core feat/phase2-integration (tax, catalog, documents, printing and the sync engine, merged; client-core PR 5)
+      # Tests also read client-core's sources for its sync simulator (src/sync/testkit). When those branches reach main,
+      # drop the @refs.
       sibling-repos: |
         ui-kit@feat/phase2-components
-        client-core@feat/phase2-domain
+        client-core@feat/phase2-integration
 
   gitleaks:
     uses: hostryhq/.github/.github/workflows/gitleaks.yml@main

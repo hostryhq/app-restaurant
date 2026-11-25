@@ -13,6 +13,10 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "paths": {
+      "@hostry/client-core": ["../client-core/src/index.ts"],
+      "@hostry/client-core/testkit/*": ["../client-core/src/sync/testkit/*.ts"]
+    },
     "types": ["vite/client", "node"]
   },
   "include": ["src", "vite.config.ts"]
