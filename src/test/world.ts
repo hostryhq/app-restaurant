@@ -18,13 +18,13 @@ export class TestClock {
 
 export type World = { rt: Runtime; clock: TestClock; signIn(name: "Asha" | "Ravi" | "Meena" | "Anand"): Promise<void> };
 
-const PINS = { Asha: ["m-asha", "1111"], Ravi: ["m-ravi", "2222"], Meena: ["m-meena", "333333"], Anand: ["m-anand", "444444"] } as const;
+const PINS = { Asha: ["m-asha", "1111"], Ravi: ["m-ravi", "2222"], Meena: ["m-meena", "3333"], Anand: ["m-anand", "4444"] } as const;
 
 export async function world(o: RuntimeOptions = {}): Promise<World> {
   const clock = new TestClock();
   const rt = await createRuntime({ now: clock.now, ...o });
   // A counter (pos) device opens the day when a member who may open it signs in; waiter handhelds cannot (day.open is pos-only).
-  const day = await rt.identity.signIn("m-meena", "333333");
+  const day = await rt.identity.signIn("m-meena", "3333");
   if (day.ok) {
     rt.setSession(day.session);
     await ensureDayOpen(rt.ctx);

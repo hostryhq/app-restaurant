@@ -56,8 +56,8 @@ export type StubMember = { memberId: string; displayName: string; role: keyof ty
 export const DEMO_MEMBERS: StubMember[] = [
   { memberId: "m-asha", displayName: "Asha", role: "cashier", pin: "1111" },
   { memberId: "m-ravi", displayName: "Ravi", role: "waiter", pin: "2222" },
-  { memberId: "m-meena", displayName: "Meena", role: "manager", pin: "333333" },
-  { memberId: "m-anand", displayName: "Anand", role: "owner", pin: "444444" },
+  { memberId: "m-meena", displayName: "Meena", role: "manager", pin: "3333" },
+  { memberId: "m-anand", displayName: "Anand", role: "owner", pin: "4444" },
 ];
 
 export type StubOptions = {

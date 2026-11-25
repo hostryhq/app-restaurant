@@ -1,0 +1,92 @@
+import { fireEvent, render } from "@solidjs/testing-library";
+import { flush } from "solid-js";
+import { expect } from "vitest";
+import { App } from "../features/App";
+import { createAppTranslator } from "../i18n";
+import { deviceSession, type RuntimeOptions } from "../runtime";
+import { world, type World } from "./world";
+
+export const byId = (id: string): HTMLElement => {
+  const el = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+  if (!el) throw new Error(`no element with data-testid=${id}`);
+  return el;
+};
+export const queryById = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+export const text = (id: string): string => byId(id).textContent ?? "";
+
+/** Poll until `fn` stops throwing (no sleeps: local writes finish in a few microtask turns). */
+export async function until<T>(fn: () => T, ms = 4000): Promise<T> {
+  const end = Date.now() + ms;
+  let last: unknown;
+  for (;;) {
+    flush();
+    try {
+      return fn();
+    } catch (e) {
+      last = e;
+    }
+    if (Date.now() > end) throw last;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+export const find = (id: string): Promise<HTMLElement> => until(() => byId(id));
+
+export type Ui = World & {
+  /** Number of touch taps since the last `reset()`: every click on a control counts once. */
+  taps: () => number;
+  reset(): void;
+  tap(id: string): Promise<void>;
+  /** A key press (keyboard-only budgets count key groups, not individual characters). */
+  keys: () => number;
+  press(key: string, init?: KeyboardEventInit): void;
+  pin(digits: string, scope?: string): Promise<void>;
+  login(name: "Asha" | "Ravi" | "Meena" | "Anand"): Promise<void>;
+};
+
+const IDS = { Asha: "m-asha", Ravi: "m-ravi", Meena: "m-meena", Anand: "m-anand" } as const;
+const PINS = { Asha: "1111", Ravi: "2222", Meena: "3333", Anand: "4444" } as const;
+
+export async function mountApp(o: RuntimeOptions & { signedIn?: keyof typeof IDS } = {}): Promise<Ui> {
+  const w = await world(o);
+  let taps = 0;
+  let keys = 0;
+  const translator = createAppTranslator();
+  const device = w.rt.deviceKind === "kds" ? deviceSession(w.rt) : undefined;
+  if (device) w.rt.setSession(device);
+  render(() => <App runtime={w.rt} translator={translator} {...(device ? { session: device } : {})} />);
+  const ui: Ui = {
+    ...w,
+    taps: () => taps,
+    keys: () => keys,
+    reset() {
+      taps = 0;
+      keys = 0;
+    },
+    async tap(id) {
+      const el = await find(id);
+      taps++;
+      fireEvent.click(el);
+      flush();
+      await until(() => true);
+    },
+    press(key, init = {}) {
+      keys++;
+      fireEvent.keyDown(document.body, { key, ...init });
+      flush();
+    },
+    async pin(digits, scope = "login-pin-numpad") {
+      for (const d of digits) {
+        fireEvent.click(await find(`${scope}-${d}`));
+        flush();
+      }
+    },
+    async login(name) {
+      await ui.tap(`login-user-${IDS[name]}`);
+      await ui.pin(PINS[name]);
+      await until(() => expect(queryById("app-header")).not.toBeNull());
+      ui.reset();
+    },
+  };
+  if (o.signedIn) await ui.login(o.signedIn);
+  return ui;
+}

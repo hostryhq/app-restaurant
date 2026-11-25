@@ -82,4 +82,6 @@ export type CashEvent = Base & { kind: "cash_in" | "cash_out" | "owner_cash_drop
 export type ReasonCode = Base & { purpose: string; label_key: string; active: boolean };
 export type OpRow = Base & { seq: number; intent: string; at: string; actor: string; delivery: "local" | "at_hub" | "in_cloud"; muts: Array<{ e: string; id: string; k: string }>; approval?: string; doc?: { type: string; number: string } };
 
+export type { Item, Category } from "@hostry/client-core";
+
 export const as = <T extends Row>(rows: Row[]): T[] => rows as T[];

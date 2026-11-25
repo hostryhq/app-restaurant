@@ -86,3 +86,17 @@ export async function createRuntime(o: RuntimeOptions = {}): Promise<Runtime> {
     now,
   };
 }
+
+/** Device session of a KDS screen: no member, no PIN, only the kitchen's permissions (AC 191). */
+export function deviceSession(rt: Runtime): Session {
+  return {
+    tenantId: TENANT_ID,
+    memberId: "device-kds",
+    deviceId: "dev-kds",
+    sessionId: "s-device",
+    kind: "shared",
+    grants: [{ outlets: [OUTLET_ID], perms: ["kds.bump", "menu.availability.set"] }],
+    expiresAt: new Date(rt.now() + 365 * 86_400_000).toISOString(),
+    offline: true,
+  };
+}

@@ -74,7 +74,7 @@ describe("discounts, credit notes, re-bill", () => {
     expect(T.discountDecision(w.rt.ctx, c, "percent", 500)).toBe("apply"); // 5% within the 10% limit
     expect(T.discountDecision(w.rt.ctx, c, "percent", 2000)).toBe("ask_manager");
     await expect(T.applyDiscount(w.rt.ctx, { checkId: c, kind: "percent", value: 2000, reasonCodeId: "rc-disc-regular" })).rejects.toMatchObject({ code: "approval_needed" });
-    const ap = await w.rt.identity.approve("m-meena", "333333", "bill.discount.over_limit", "m-asha");
+    const ap = await w.rt.identity.approve("m-meena", "3333", "bill.discount.over_limit", "m-asha");
     expect(ap.ok).toBe(true);
     if (!ap.ok) return;
     await T.applyDiscount(w.rt.ctx, { checkId: c, kind: "percent", value: 2000, reasonCodeId: "rc-disc-regular", approvalId: ap.approvalId });
@@ -146,7 +146,7 @@ describe("KDS, cancel, blackout late tickets", () => {
 
     const line = rows<OrderLine>(w.rt, "order_line")[0]!;
     await expect(T.cancelSentLine(w.rt.ctx, { lineId: line.id, qtyMilli: 1000, reasonCodeId: "rc-cancel-mind" })).rejects.toBeInstanceOf(PermissionError);
-    const ap = await w.rt.identity.approve("m-meena", "333333", "order.line.cancel", "m-asha");
+    const ap = await w.rt.identity.approve("m-meena", "3333", "order.line.cancel", "m-asha");
     if (!ap.ok) throw new Error("approval");
     await T.cancelSentLine(w.rt.ctx, { lineId: line.id, qtyMilli: 1000, reasonCodeId: "rc-cancel-mind", approvalId: ap.approvalId });
     const cancel = rows<{ wastage: boolean; kitchen_status_at_cancel: string }>(w.rt, "order_line_cancel")[0]!;

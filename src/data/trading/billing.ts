@@ -382,6 +382,9 @@ export async function rebillBill(ctx: TradingCtx, o: { billId: string; gstin?: s
 /** Paper bill-book page typed in after a power cut (RS31): manager only, never renumbered; a total mismatch is flagged. */
 export async function bookEntry(ctx: TradingCtx, input: ManualEntryInput): Promise<{ matchesBook: boolean; billId: string }> {
   need(ctx, "bill.manual_entry");
+  const maxBack = settingsFrom((e) => ctx.data.snapshot().list(e)).manual_entry_max_days_back;
+  const daysBack = Math.round((Date.parse(`${istDateOf(ctx.now())}T00:00:00Z`) - Date.parse(`${input.invoiceDate}T00:00:00Z`)) / 86_400_000);
+  if (daysBack < 0 || daysBack > maxBack) throw new TradingError("refused", `book entry is limited to ${maxBack} days back`);
   let out!: { matchesBook: boolean; billId: string };
   await ctx.data.write({
     intent: "bill.manual_entry",

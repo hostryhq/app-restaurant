@@ -55,11 +55,11 @@ export const ENTITIES = [
 
 export class Snapshot {
   constructor(private readonly tables: Readonly<Record<string, Row[]>> = {}) {}
-  list<T extends Row = Row>(entity: string): T[] {
+  list<T = Row>(entity: string): T[] {
     return (this.tables[entity] ?? []) as T[];
   }
-  get<T extends Row = Row>(entity: string, id: string | undefined): T | undefined {
-    return id === undefined ? undefined : (this.list<T>(entity).find((r) => r.id === id) as T | undefined);
+  get<T = Row>(entity: string, id: string | undefined): T | undefined {
+    return id === undefined ? undefined : ((this.list<Row>(entity).find((r) => r.id === id) as unknown) as T | undefined);
   }
 }
 
