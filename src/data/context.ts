@@ -30,7 +30,7 @@ export const DEFAULT_SETTINGS: BillingSettings = {
   discount_limit_bp: 1000,
 };
 
-export type OutletSettings = BillingSettings & { shift_required: boolean; manual_entry_max_days_back: number; day_cutoff_minutes: number; rebill_allowance_per_shift: number };
+export type OutletSettings = BillingSettings & { shift_required: boolean; manual_entry_max_days_back: number; day_cutoff_minutes: number; rebill_allowance_per_shift: number; comp_allowance_paise: number; open_item_limit_paise: number };
 
 export function settingsFrom(list: ListFn): OutletSettings {
   const b = (list("billing_settings")[0] ?? {}) as Partial<OutletSettings>;
@@ -40,7 +40,9 @@ export function settingsFrom(list: ListFn): OutletSettings {
     shift_required: b.shift_required ?? true,
     manual_entry_max_days_back: b.manual_entry_max_days_back ?? 2,
     day_cutoff_minutes: b.day_cutoff_minutes ?? 300,
-    rebill_allowance_per_shift: b.rebill_allowance_per_shift ?? 0,
+    rebill_allowance_per_shift: b.rebill_allowance_per_shift ?? 3,
+    comp_allowance_paise: b.comp_allowance_paise ?? 50_000,
+    open_item_limit_paise: b.open_item_limit_paise ?? 50_000,
   };
 }
 

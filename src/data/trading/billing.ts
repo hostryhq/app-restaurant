@@ -38,6 +38,7 @@ import type { Check, CheckPresent, OrderLine, OrderLineCancel, OpRow, Shift } fr
 import { billingContextFrom, settingsFrom } from "../context";
 import { BILL_PRINTER } from "./bill-printer";
 import { checkOf, depsFor, holds, liveLines, need, requireDay, TradingError, isoNow, type ListFn, type TradingCtx } from "./ctx";
+import { checkRebill } from "./allowances";
 import { newCounterCheck, orderIdOf } from "./orders";
 import { sendKot, ackPrinted } from "./kitchen";
 import { tableLabelOf } from "./kitchen";
@@ -408,6 +409,8 @@ export async function rebillBill(ctx: TradingCtx, o: { billId: string; gstin?: s
       const original = loadOriginal(b.list, o.billId);
       const reps = o.replacements ? o.replacements(original) : [replacementFor(original, { ...(o.gstin ? { customer_gstin: o.gstin.trim().toUpperCase() } : {}), ...(o.customerName ? { customer_name: o.customerName } : {}), ...(original.bill.customer_gstin && !o.gstin ? { customer_gstin: original.bill.customer_gstin } : {}) })];
       const r = rebill(depsFor(b), billingContextFrom(b.list, ctx.outletId, ctx.manualBookCodes), original, reps, { reasonCodeId: o.reasonCodeId, previousCredited: previouslyCredited(b.list, o.billId) });
+      // Ruling 8 (P2-H2): after payment, past the shift count, or beyond the discount/comp limits, a manager must clear it.
+      checkRebill(ctx, (e) => (e === "_op" || e === "shift" ? ctx.data.snapshot().list(e) : b.list(e)), openShift((e) => ctx.data.snapshot().list(e)), original.bill, paidOf(b.list, o.billId), r.bills.reduce((s, x) => s + x.bill.total_paise, 0), o.approvalId);
       out = { credit: r.credit.note.number, bills: r.bills.map((x) => x.bill.number) };
       return rebillMutations(r);
     },

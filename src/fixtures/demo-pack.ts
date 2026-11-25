@@ -9,7 +9,7 @@ import { DEMO_OUTLET_ID, DEMO_TENANT_ID } from "./demo-outlet";
  * secret. Role to permission templates are assumptions for the ADR-0005 role templates and the security review.
  */
 
-const WAITER = ["order.create", "order.edit", "bill.request", "bill.present", "bill.new", "bill.split", "order.items.move", "order.table.move", "kot.handover", "menu.availability.set"];
+const WAITER = ["order.create", "order.edit", "bill.request", "bill.present", "bill.new", "bill.split", "order.items.move", "order.table.move", "kot.handover", "menu.availability.set", "order.line.cancel.grace"];
 const CASHIER = [
   ...WAITER,
   "bill.finalize",

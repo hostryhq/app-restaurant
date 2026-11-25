@@ -2,11 +2,12 @@ import { formatKotNo, linesToSend, routeToStations, toKotDoc, type KotDoc, type 
 import { effectiveTableId } from "../../domain/table-state";
 import { nextKdsStatus } from "../../domain/kds";
 import { liveQty } from "../../domain/lines";
-import type { Check, DiningTable, Kot, KotHandover, KotLine, OrderLine, OrderLineCancel, Seating, SeatingMove, Station } from "../../domain/rows";
+import type { Check, DiningTable, Kot, KotHandover, KotLine, OrderLine, OrderLineCancel, Seating, SeatingMove, Shift, Station } from "../../domain/rows";
 import { menuFrom } from "../context";
 import { KITCHEN_PRINTER } from "./bill-printer";
 import { need, holds, requireDay, TradingError, isoNow, type ListFn, type TradingCtx } from "./ctx";
 import { orderIdOf } from "./orders";
+import { checkGrace } from "./allowances";
 
 const ORDER_TYPE_LABEL: Record<string, string> = { dine_in: "Dine-in", takeaway: "Takeaway", counter: "Counter" };
 
@@ -160,8 +161,9 @@ const stationPrinter = (list: ListFn, kotId: string): string => stationOf(list, 
  * Cancel part or all of a sent line (RS07). Needs `order.line.cancel`, or a manager's approval id from the dialog. A cancel
  * ticket goes to the station; if the kitchen had started, the cancel is marked wastage (kitchen_status_at_cancel).
  */
-export async function cancelSentLine(ctx: TradingCtx, o: { lineId: string; qtyMilli: number; reasonCodeId: string; approvalId?: string; kotId?: string }): Promise<void> {
-  need(ctx, "order.line.cancel", o.approvalId);
+export async function cancelSentLine(ctx: TradingCtx, o: { lineId: string; qtyMilli: number; reasonCodeId: string; approvalId?: string; kotId?: string; grace?: boolean }): Promise<void> {
+  if (o.grace) need(ctx, "order.line.cancel.grace");
+  else need(ctx, "order.line.cancel", o.approvalId);
   const snap = ctx.data.snapshot();
   const line = snap.get<OrderLine>("order_line", o.lineId);
   if (!line) throw new TradingError("not_found", o.lineId);
@@ -171,17 +173,18 @@ export async function cancelSentLine(ctx: TradingCtx, o: { lineId: string; qtyMi
   if (qty < 1) throw new TradingError("refused", "nothing to cancel");
   const list: ListFn = (e) => snap.list(e);
   const kotLine = snap.list<KotLine>("kot_line").find((k) => k.order_line_id === o.lineId);
+  if (o.grace) checkGrace(ctx, (e) => snap.list(e), (snap.list("shift") as Shift[]).find((s) => s.status === "open"), line, kotLine);
   const status = kotLine?.status ?? "new";
   const check = snap.get<Check>("check", line.check_id);
   const kotId = o.kotId ?? ctx.newId();
   await ctx.data.write({
-    intent: "order.line.cancel",
+    intent: o.grace ? "order.line.cancel.grace" : "order.line.cancel",
     ...(o.approvalId ? { approval: o.approvalId } : {}),
     build: (b) => {
       const date = requireDay(list);
       return [
         { e: "kot", id: kotId, k: "insert", f: { check_id: line.check_id, order_id: line.order_id, station_code: line.station_code, kot_no: `${ctx.deviceCode}-C${String(snap.list("kot").length + 1).padStart(3, "0")}`.slice(0, 12), kind: "cancel", order_type: check?.order_type ?? "dine_in", table_name: check ? tableLabelOf(list, check) : "", business_date: date } },
-        { e: "order_line_cancel", id: b.newId(), k: "insert", f: { order_line_id: line.id, kind: "cancel", qty_milli: qty, reason_code_id: o.reasonCodeId, ...(o.approvalId ? { approval_id: o.approvalId } : {}), kitchen_status_at_cancel: status, wastage: status !== "new", kot_id: kotId } },
+        { e: "order_line_cancel", id: b.newId(), k: "insert", f: { order_line_id: line.id, kind: o.grace ? "grace_cancel" : "cancel", qty_milli: qty, reason_code_id: o.reasonCodeId, ...(o.approvalId ? { approval_id: o.approvalId } : {}), kitchen_status_at_cancel: status, wastage: status !== "new", kot_id: kotId } },
       ];
     },
   });
