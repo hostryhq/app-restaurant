@@ -4,3 +4,4 @@ export * from "./kitchen";
 export * from "./billing";
 export * from "./shift";
 export * from "./floor";
+export * from "./approvals";

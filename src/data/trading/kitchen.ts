@@ -160,7 +160,7 @@ const stationPrinter = (list: ListFn, kotId: string): string => stationOf(list, 
  * Cancel part or all of a sent line (RS07). Needs `order.line.cancel`, or a manager's approval id from the dialog. A cancel
  * ticket goes to the station; if the kitchen had started, the cancel is marked wastage (kitchen_status_at_cancel).
  */
-export async function cancelSentLine(ctx: TradingCtx, o: { lineId: string; qtyMilli: number; reasonCodeId: string; approvalId?: string }): Promise<void> {
+export async function cancelSentLine(ctx: TradingCtx, o: { lineId: string; qtyMilli: number; reasonCodeId: string; approvalId?: string; kotId?: string }): Promise<void> {
   need(ctx, "order.line.cancel", o.approvalId);
   const snap = ctx.data.snapshot();
   const line = snap.get<OrderLine>("order_line", o.lineId);
@@ -173,7 +173,7 @@ export async function cancelSentLine(ctx: TradingCtx, o: { lineId: string; qtyMi
   const kotLine = snap.list<KotLine>("kot_line").find((k) => k.order_line_id === o.lineId);
   const status = kotLine?.status ?? "new";
   const check = snap.get<Check>("check", line.check_id);
-  const kotId = ctx.newId();
+  const kotId = o.kotId ?? ctx.newId();
   await ctx.data.write({
     intent: "order.line.cancel",
     ...(o.approvalId ? { approval: o.approvalId } : {}),

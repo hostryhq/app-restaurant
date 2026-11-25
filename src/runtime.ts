@@ -20,7 +20,7 @@ import {
 import { AppData } from "./data/app-data";
 import { monotonicIds } from "./data/ids";
 import { PackIdentity } from "./data/auth/pack-identity";
-import { outletStreamOf, type DeviceKind, type DevicePack, type PinProver } from "./data/auth/pack";
+import { brandStreamOf, outletStreamOf, type DeviceKind, type DevicePack, type PinProver } from "./data/auth/pack";
 import { OpLog } from "./data/op-log";
 import type { IdentityPort, OpWriter, RecordSpec, SyncPort } from "./data/ports";
 import type { TradingCtx } from "./data/trading/ctx";
@@ -107,6 +107,7 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   const deviceCode = pack.deviceCode;
   const deviceId = pack.deviceId;
   const outletStream = outletStreamOf(pack);
+  const brandStream = brandStreamOf(pack);
   const store = o.store ?? new InMemoryStore(pack.tenantId);
   const newId = monotonicIds(now);
 
@@ -119,6 +120,7 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
     schemas: restaurantRegistry(),
     deviceId,
     outletStream,
+    streams: [outletStream, brandStream],
     signer,
     verifier,
     packVersion: pack.packV,
@@ -155,7 +157,7 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
     onError: () => undefined, // offline is the normal state; the status says so
   });
   const sync = createSyncPort(runner, engine);
-  const engineWriter = new EngineOpWriter(engine, { streams: { brand: outletStream, tenant: outletStream } });
+  const engineWriter = new EngineOpWriter(engine, { streams: { brand: brandStream, tenant: outletStream } });
   const autoSync = o.autoSync ?? false;
   // Holds the runtime once it exists: the writer re-opens a KDS device session through it.
   const ref: { rt?: Runtime } = {};

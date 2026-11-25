@@ -3,6 +3,7 @@ import {
   computeCheck,
   creditNoteMutations,
   finalizeBill,
+  financialYearOfDate,
   fullCredit,
   istDateOf,
   issueCreditNote,
@@ -302,8 +303,34 @@ export async function recordPayment(ctx: TradingCtx, billId: string, payments: P
 
 // ---- Credit note, re-bill -------------------------------------------------------------------------------------------
 
+/**
+ * What an approval of a credit note binds, known before the note is issued: the row id the note will take and its total
+ * (target `credit_note:<noteId>`, values `bill_id` and `total_paise`). The total is the calculation the issue will repeat; no
+ * number is taken here.
+ */
+export function planCreditNote(ctx: TradingCtx, o: { billId: string; lines?: Array<{ bill_line_id: string; qty_milli: number }>; reasonCodeId: string; refundTender: RefundTender }): { noteId: string; totalPaise: number } {
+  const list: ListFn = (e) => ctx.data.snapshot().list(e);
+  const original = loadOriginal(list, o.billId);
+  const prev = previouslyCredited(list, o.billId);
+  const atMs = ctx.now();
+  const fy = financialYearOfDate(istDateOf(atMs));
+  let n = 0;
+  const cn = issueCreditNote(
+    {
+      allocator: { allocate: () => ({ number: "PLAN", seriesCode: "PLAN", financialYear: fy, running: 0 }) },
+      newId: () => `plan-${++n}`,
+      nowMs: atMs,
+      businessDays: (list("business_day") as unknown as Array<{ business_date: string; status: "open" | "closed" }>).map((d) => ({ business_date: d.business_date, status: d.status })),
+    },
+    billingContextFrom(list, ctx.outletId, ctx.manualBookCodes),
+    original,
+    { lines: o.lines ?? fullCredit(original, prev), reasonCodeId: o.reasonCodeId, refundTender: o.refundTender, previousCredited: prev },
+  );
+  return { noteId: ctx.newId(), totalPaise: cn.note.total_paise };
+}
+
 /** Credit note for a numbered bill (RM-Y6): chosen lines and quantities, or the whole bill. Manager permission or approval. */
-export async function creditNote(ctx: TradingCtx, o: { billId: string; lines?: Array<{ bill_line_id: string; qty_milli: number }>; reasonCodeId: string; refundTender: RefundTender; approvalId?: string }): Promise<{ number: string; totalPaise: number }> {
+export async function creditNote(ctx: TradingCtx, o: { billId: string; lines?: Array<{ bill_line_id: string; qty_milli: number }>; reasonCodeId: string; refundTender: RefundTender; approvalId?: string; noteId?: string }): Promise<{ number: string; totalPaise: number }> {
   need(ctx, "bill.credit_note.create", o.approvalId);
   let out!: { number: string; total: number };
   await ctx.data.write({
@@ -312,7 +339,15 @@ export async function creditNote(ctx: TradingCtx, o: { billId: string; lines?: A
     build: (b) => {
       const original = loadOriginal(b.list, o.billId);
       const prev = previouslyCredited(b.list, o.billId);
-      const cn = issueCreditNote(depsFor(b), billingContextFrom(b.list, ctx.outletId, ctx.manualBookCodes), original, {
+      const deps = depsFor(b);
+      // The credit note row id is the first id the note takes: an approval cites it as the target, so it is chosen beforehand.
+      let first = o.noteId;
+      const newId = (): string => {
+        const id = first ?? b.newId();
+        first = undefined;
+        return id;
+      };
+      const cn = issueCreditNote({ ...deps, newId }, billingContextFrom(b.list, ctx.outletId, ctx.manualBookCodes), original, {
         lines: o.lines ?? fullCredit(original, prev),
         reasonCodeId: o.reasonCodeId,
         refundTender: o.refundTender,
@@ -411,7 +446,7 @@ export { newCounterCheck, ackPrinted };
  * for that). At most what was paid, less earlier refunds. Needs `payment.refund` or a manager's approval. A cash refund opens
  * the drawer and lowers the shift's expected cash.
  */
-export async function refundPayment(ctx: TradingCtx, o: { paymentId: string; amountPaise: number; reasonCodeId: string; approvalId?: string }): Promise<{ refundId: string }> {
+export async function refundPayment(ctx: TradingCtx, o: { paymentId: string; amountPaise: number; reasonCodeId: string; approvalId?: string; refundId?: string }): Promise<{ refundId: string }> {
   need(ctx, "payment.refund", o.approvalId);
   const list: ListFn = (e) => ctx.data.snapshot().list(e);
   const pay = (list("payment") as unknown as PaymentRow[]).find((p) => p.id === o.paymentId);
@@ -419,7 +454,7 @@ export async function refundPayment(ctx: TradingCtx, o: { paymentId: string; amo
   const refunded = (list("refund") as unknown as Array<{ payment_id?: string; amount_paise: number }>).filter((r) => r.payment_id === pay.id).reduce((s, r) => s + r.amount_paise, 0);
   if (!Number.isInteger(o.amountPaise) || o.amountPaise < 1 || o.amountPaise + refunded > pay.amount_paise) throw new TradingError("refused", "a refund cannot be more than what was paid");
   const date = requireDay(list);
-  const refundId = ctx.newId();
+  const refundId = o.refundId ?? ctx.newId();
   await ctx.data.write({
     intent: "payment.refund",
     ...(o.approvalId ? { approval: o.approvalId } : {}),
@@ -437,7 +472,7 @@ const LINE_FIELDS = ["item_id", "variant_id", "variant_name", "name", "kitchen_n
  * between them the credit note stands and the manager sees an uncredited-but-empty table, never a bill without its credit.
  * Refused on a bill with payments (refund those first).
  */
-export async function creditAndReopen(ctx: TradingCtx, o: { billId: string; reasonCodeId: string; approvalId?: string }): Promise<{ credit: string; checkId: string }> {
+export async function creditAndReopen(ctx: TradingCtx, o: { billId: string; reasonCodeId: string; approvalId?: string; noteId?: string }): Promise<{ credit: string; checkId: string }> {
   need(ctx, "bill.credit_note.create", o.approvalId);
   const list0: ListFn = (e) => ctx.data.snapshot().list(e);
   const original = loadOriginal(list0, o.billId);
@@ -446,7 +481,7 @@ export async function creditAndReopen(ctx: TradingCtx, o: { billId: string; reas
   const check = checkOf(list0, original.bill.check_id);
   const kept = liveLines(list0, check.id);
   const modifiers = (list0("order_line_modifier") as unknown as Array<{ order_line_id: string; modifier_id: string; name: string; price_delta_paise: number }>).filter((m) => kept.some((l) => l.id === m.order_line_id));
-  const cn = await creditNote(ctx, { billId: o.billId, reasonCodeId: o.reasonCodeId, refundTender: "adjusted", ...(o.approvalId ? { approvalId: o.approvalId } : {}) });
+  const cn = await creditNote(ctx, { billId: o.billId, reasonCodeId: o.reasonCodeId, refundTender: "adjusted", ...(o.approvalId ? { approvalId: o.approvalId } : {}), ...(o.noteId ? { noteId: o.noteId } : {}) });
   let checkId: string;
   let orderId: string | undefined;
   if (check.order_type === "dine_in" && check.seating_id) {

@@ -68,6 +68,9 @@ export function packFromJson(raw: unknown): DevicePack {
 /** The stream of the device's outlet (ADR-0002). */
 export const outletStreamOf = (pack: Pick<DevicePack, "outletId">): string => `outlet:${pack.outletId}`;
 
+/** The stream of the device's brand (`brand:<id>`), from the pack's `brand_id`: brand-level ops (menu, prices, reasons) are recorded here, never on the outlet stream. */
+export const brandStreamOf = (pack: Pick<DevicePack, "brandId">): string => `brand:${pack.brandId}`;
+
 /** The shell's side of PIN entry: checks the PIN against the pack's verifier and makes proofs while the PIN is in hand (ADR-0005 s7, s8). */
 export type SessionProofInput = { memberId: string; pin: string; sid: string; deviceId: string; packV: number; pinV: number; openedAt: string };
 export type ApprovalProofInput = {

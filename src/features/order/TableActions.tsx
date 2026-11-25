@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, Dialog, LineSelectList, ReasonChips } from "@hostry/ui-kit";
 import type { Check, ReasonCode } from "../../domain/rows";
-import { cancelCheck, freeTable, mergeBills, mergeTables, moveItems, moveTable, newBill, splitBill, type Selection } from "../../data/trading";
+import { billCancelBinding, cancelCheck, freeTable, mergeBills, mergeTables, moveItems, moveTable, newBill, splitBill, type Selection } from "../../data/trading";
 import { useApp } from "../app-state";
 import { floor, linesOf } from "../selectors";
 
@@ -190,11 +190,7 @@ export function TableActions(props: { open: boolean; onClose: () => void; checkI
             const r = reason() as string;
             const cancelId = app.rt.ctx.newId();
             const proof = await app.askProof({
-              permission: "bill.cancel",
-              intent: "bill.cancel",
-              target: `check_cancel:${cancelId}`,
-              reason: r,
-              values: { check_id: props.checkId, reason_code_id: r },
+              ...billCancelBinding(cancelId, props.checkId, r),
               title: app.t("actions.cancelbill"),
             });
             if (!proof.ok) return;

@@ -3,7 +3,7 @@ import type { JSX } from "@solidjs/web";
 import type { BillLineRow, RefundTender } from "@hostry/client-core";
 import { AmountField, Button, formatMoney, Input, LineSelectList, ReasonChips, SegmentedControl, toasts } from "@hostry/ui-kit";
 import type { ReasonCode } from "../../domain/rows";
-import { creditAndReopen, creditNote, loadOriginal, paidOf, paymentsOf, previouslyCredited, rebillBill, refundPayment, validGstin } from "../../data/trading";
+import { creditAndReopen, creditNote, creditNoteBinding, loadOriginal, paidOf, paymentsOf, previouslyCredited, rebillBill, refundBinding, refundPayment, validGstin } from "../../data/trading";
 import { useApp } from "../app-state";
 import { BackButton } from "../common";
 
@@ -36,14 +36,29 @@ export function Credit(props: { billId: string }): JSX.Element {
     const r = reason();
     if (!r) return;
     const perm = { credit: "bill.credit_note.create", rebill: "bill.rebill", reopen: "bill.credit_note.create", refund: "payment.refund" }[mode()];
-    const proof = await app.askProof({ target: props.billId, reason: r, permission: perm, title: app.t({ credit: "credit.title", rebill: "credit.rebill", reopen: "credit.reopen", refund: "credit.refund.mode" }[mode()]) });
+    const title = app.t({ credit: "credit.title", rebill: "credit.rebill", reopen: "credit.reopen", refund: "credit.refund.mode" }[mode()]);
+    const lines = Object.keys(sel()).length ? Object.entries(sel()).map(([id, q]) => ({ bill_line_id: id, qty_milli: q * 1000 })) : undefined;
+    // An approval binds the row the op inserts and the amounts it records, so another amount needs another approval: the id
+    // of the credit note or refund and its total are fixed here and used by the op.
+    let noteId: string | undefined;
+    let refundId: string | undefined;
+    let ask: Parameters<typeof app.askProof>[0] = { permission: perm, target: props.billId, reason: r, title };
+    if (mode() === "credit" || mode() === "reopen") {
+      const b = creditNoteBinding(app.rt.ctx, { billId: props.billId, ...(mode() === "credit" && lines ? { lines } : {}), reasonCodeId: r, refundTender: mode() === "credit" ? refund() : "adjusted" });
+      noteId = b.noteId;
+      ask = { permission: b.permission, intent: b.intent, target: b.target, reason: b.reason, values: b.values, title };
+    } else if (mode() === "refund") {
+      refundId = app.rt.ctx.newId();
+      ask = { ...refundBinding(refundId, props.billId, payment() ?? "", refundPaise(), r), title };
+    }
+    const proof = await app.askProof(ask);
     if (!proof.ok) return;
     const approval = proof.approvalId ? { approvalId: proof.approvalId } : {};
     if (mode() === "refund") {
       const p = payment();
       if (!p) return;
       await app.run(
-        () => refundPayment(app.rt.ctx, { paymentId: p, amountPaise: refundPaise(), reasonCodeId: r, ...approval }),
+        () => refundPayment(app.rt.ctx, { paymentId: p, amountPaise: refundPaise(), reasonCodeId: r, ...(refundId ? { refundId } : {}), ...approval }),
         () => {
           toasts.show(app.t("credit.refunded", { amount: formatMoney(refundPaise()) }));
           app.back();
@@ -51,16 +66,15 @@ export function Credit(props: { billId: string }): JSX.Element {
       );
     } else if (mode() === "reopen") {
       await app.run(
-        () => creditAndReopen(app.rt.ctx, { billId: props.billId, reasonCodeId: r, ...approval }),
+        () => creditAndReopen(app.rt.ctx, { billId: props.billId, reasonCodeId: r, ...(noteId ? { noteId } : {}), ...approval }),
         (n) => {
           toasts.show(app.t("credit.reopened", { credit: n.credit }));
           app.back();
         },
       );
     } else if (mode() === "credit") {
-      const lines = Object.keys(sel()).length ? Object.entries(sel()).map(([id, q]) => ({ bill_line_id: id, qty_milli: q * 1000 })) : undefined;
       await app.run(
-        () => creditNote(app.rt.ctx, { billId: props.billId, ...(lines ? { lines } : {}), reasonCodeId: r, refundTender: refund(), ...approval }),
+        () => creditNote(app.rt.ctx, { billId: props.billId, ...(lines ? { lines } : {}), reasonCodeId: r, refundTender: refund(), ...(noteId ? { noteId } : {}), ...approval }),
         (n) => {
           toasts.show(app.t("credit.done", { number: n.number }));
           app.back();

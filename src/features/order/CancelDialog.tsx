@@ -3,7 +3,7 @@ import type { JSX } from "@solidjs/web";
 import { Button, Dialog, ReasonChips, Stepper } from "@hostry/ui-kit";
 import type { OrderLine, OrderLineCancel, ReasonCode } from "../../domain/rows";
 import { liveQty } from "../../domain/lines";
-import { cancelSentLine } from "../../data/trading";
+import { cancelSentLine, lineCancelBinding } from "../../data/trading";
 import { useApp } from "../app-state";
 
 /**
@@ -34,9 +34,12 @@ export function CancelDialog(props: { lineId: string | undefined; onClose: () =>
     const l = line();
     const r = reason();
     if (!l || !r) return;
-    const proof = await app.askProof({ target: l.id, reason: r, permission: "order.line.cancel", title: app.t("cancel.title", { qty: qty(), item: l.name }), summary: app.t("cancel.title", { qty: qty(), item: l.name }) });
+    // The approval binds the cancel ticket (the op's first row), the line, the quantity and the reason; the quantity is what the op records.
+    const kotId = app.rt.ctx.newId();
+    const qtyMilli = Math.min(qty() * 1000, live() * 1000);
+    const proof = await app.askProof({ ...lineCancelBinding(kotId, l.id, qtyMilli, r), title: app.t("cancel.title", { qty: qty(), item: l.name }), summary: app.t("cancel.title", { qty: qty(), item: l.name }) });
     if (!proof.ok) return;
-    const done = await app.run(() => cancelSentLine(app.rt.ctx, { lineId: l.id, qtyMilli: qty() * 1000, reasonCodeId: r, ...(proof.approvalId ? { approvalId: proof.approvalId } : {}) }));
+    const done = await app.run(() => cancelSentLine(app.rt.ctx, { lineId: l.id, qtyMilli, reasonCodeId: r, kotId, ...(proof.approvalId ? { approvalId: proof.approvalId } : {}) }));
     if (done) props.onClose();
   };
 

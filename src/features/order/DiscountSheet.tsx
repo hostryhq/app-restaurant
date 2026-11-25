@@ -3,7 +3,7 @@ import type { JSX } from "@solidjs/web";
 import { Button, Dialog, Input, parseRupeesToPaise, ReasonChips, SegmentedControl } from "@hostry/ui-kit";
 import { percentToBp } from "../../domain/discount";
 import type { Check, ReasonCode } from "../../domain/rows";
-import { applyDiscount, compLine, discountDecision, removeServiceCharge } from "../../data/trading";
+import { applyDiscount, compBinding, compLine, discountBinding, discountDecision, removeServiceCharge } from "../../data/trading";
 import { settingsFrom } from "../../data/context";
 import { linesOf } from "../selectors";
 import { useApp } from "../app-state";
@@ -38,7 +38,8 @@ export function DiscountSheet(props: { checkId: string; open: boolean; onClose: 
   const comp = async (lineId: string) => {
     const r = reason();
     if (!r) return;
-    const proof = await app.askProof({ target: lineId, reason: r, permission: "bill.line.comp", title: app.t("discount.comp.title") });
+    // The approval binds the line being comped and the fields the op records (api-specs bill.line.comp binds).
+    const proof = await app.askProof({ ...compBinding(lineId, r), title: app.t("discount.comp.title") });
     if (!proof.ok) return;
     const ok = await app.run(() => compLine(app.rt.ctx, { lineId, reasonCodeId: r, ...(proof.approvalId ? { approvalId: proof.approvalId } : {}) }));
     if (ok) props.onClose();
@@ -52,11 +53,7 @@ export function DiscountSheet(props: { checkId: string; open: boolean; onClose: 
     if (decision() === "ask_manager" || decision() === "own_pin" || decision() === "comp") {
       // The approval binds this discount: the check it is on, its kind and its value. Another amount needs another approval.
       const proof = await app.askProof({
-        permission: "bill.discount.over_limit",
-        intent: "bill.discount.over_limit",
-        target: `check:${props.checkId}`,
-        reason: r,
-        values: { discount_kind: kind(), discount_value: v },
+        ...discountBinding(props.checkId, kind(), v, r),
         title: app.t("discount.title"),
         summary: app.t("discount.summary", { value: text() }),
       });
