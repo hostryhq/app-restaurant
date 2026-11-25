@@ -1,85 +1,66 @@
 # Integration notes (Phase 2 app build)
 
-What this app is wired to, what is stood in for, and what each client-core work stream must still provide. The app codes to interfaces
-(`src/data/ports.ts`, `src/devices/print-hub.ts`, `src/shell/shell.ts`) so the three client-core lines compose without a screen changing.
+What this app is wired to, what is still stood in for, and what client-core and ui-kit still owe it.
 
-## Dependency lines and how they compose
+## What is wired
 
 | Piece | Where it lives | Used here |
 |---|---|---|
-| Tax engine, catalog (`Menu`, KOT routing), documents (finalize, pre-bill, credit note, re-bill, manual book, business day, print mapping), printing (`PrintService`, ESC/POS, queue, fakes), in-memory store, device fakes | client-core `feat/phase2-domain` (includes `feat/phase2-printing`) | Imported as `@hostry/client-core` (`link:../client-core`) |
-| Sync engine (`SyncEngine.record`, `SyncRunner`, hub transport, series allocator, test kit) | client-core `feat/phase1-sync` (a separate line from the scaffold; no common tip with the domain line) | **Not imported.** Coded to through `OpWriter`, `SyncPort`; stood in for by `LocalOpWriter` and `SyncSim` |
-| POS, KDS, shift components | ui-kit `feat/phase2-components` | Imported as `@hostry/ui-kit` (`link:../ui-kit`) |
+| Sync engine (`SyncEngine`, `SyncRunner`, series allocator), `EngineOpWriter`, `createSyncPort`, intent registry, restaurant entity schemas | client-core `feat/phase2-integration` (client-core PR 5) | `src/runtime.ts` builds `new EngineOpWriter(engine, { streams })`, `createSyncPort(runner, engine)`, sets `engine.session` on every sign-in and sign-out |
+| Tax engine, catalog, documents, printing, in-memory store, device fakes | same branch | imported as `@hostry/client-core` (`link:../client-core`) |
+| POS, KDS, shift components | ui-kit `feat/phase2-components` | imported as `@hostry/ui-kit` (`link:../ui-kit`) |
+| Sync simulator (`FakeNode` hub and cloud) | client-core `src/sync/testkit` (not in the published build) | tests only, through a vitest alias and a `tsconfig` path to the sibling's sources |
 
-**Multi-branch dependency problem.** `link:` dependencies resolve to a sibling folder, so one checkout of client-core can hold only one
-branch, and the domain line and the sync line cannot both be in it. CI works around it for what this app imports (`ci.yml` pins
-`ui-kit@feat/phase2-components` and `client-core@feat/phase2-domain`; the shared `ts-ci.yml` supports `name@ref`). It cannot solve the sync
-line. Needed from the client-core owner: an integration branch (for example `feat/phase2-integration`) that merges
-phase1-sync + phase2-domain, then change `ci.yml` to pin it and replace `LocalOpWriter`/`SyncSim` with the real engine and runner.
+CI pins `ui-kit@feat/phase2-components` and `client-core@feat/phase2-integration`. The stand-ins `LocalOpWriter` and `SyncSim` are gone.
 
-## What stands in for the sync engine
+How the app sits on the engine:
 
-`LocalOpWriter` (`src/data/local-writer.ts`) has the engine's `record({ intent, build })` contract: one local transaction allocates the legal
-number, applies the mutations, appends the op. `SyncSim` (`src/data/sync-sim.ts`) has the `SyncClient` surface plus the fields
-the screens need (`atHubOps`, `upstream`, `state`, `clockWrong`). Replacement is: pass a `SyncEngine` as `OpWriter` and a `SyncRunner`
-adapter as `SyncPort` in `src/runtime.ts`. Known differences the engine owner must resolve (TODO items; the first two need a ruling):
+- **Rows.** `AppData` reads `engine.rows(entity)` (visible rows, candidates stripped). `_local` is a device-only table in the same store (KDS acknowledgements, day carry-over marks).
+- **Op log.** `src/data/op-log.ts` exposes every op the device holds as `_op` rows (intent, actor, time, muts, first legal number, own or pulled, delivery of own ops from `engine.delivery`). It uses only `engine.vector` and `engine.opAt`.
+- **Provenance.** The entity files carry no `waiter_id`, `opened_by`, `opened_at`, `created_at`, `requested_at` or `presented_at`. The snapshot adds them from the op that inserted the row (`PROVENANCE` in `runtime.ts`), the same on every device. Builders no longer write them.
+- **Numbers.** `seriesFor(deviceCode)` is the offline pack's grants (sale series on the device code, a credit-note series `C..`). A device that never bills (handheld, KDS) has none.
+- **Demo configuration.** `seedDemo` records the menu, floor, settings and rule set as one op (`seed.demo`, not in the intent registry) instead of writing rows into the store, so the engine owns every row it merges and other devices get the configuration by sync. In tests only the first device seeds.
+- **Sync.** `runner.syncNow()` runs on demand and, with `autoSync`, after a write while an upstream answered. `sync.start()` runs the background timer. The browser build has no transports, so it is one device showing Offline.
+- **Storage.** The browser build opens `InMemoryStore.open(tenant, IndexedDbPersistence)` (one database per device kind) and seeds an empty one. The signer is regenerated on load (`SoftwareSigner`), which is fine with no upstream; a durable device key needs the shell's keystore (ADR-0005 A1, not built).
+- **Contract check.** Every op is checked against its intent before it is recorded. This caught builders that wrote fields outside the entity files and entities outside an intent; they were fixed rather than the check relaxed.
 
-1. **Several legal numbers in one op.** `bill.rebill` allocates a credit note number and one or more bill numbers in one op (api-specs
-   `sync/intents/billing.yaml`). `SyncEngine.record` throws on a second `number()` call ("an op allocates at most one legal number") and
-   an op envelope has one `doc`. `LocalOpWriter` allows several and records the first in `doc`. ADR-0002 item: `ADR needed: op envelope with
-   several document numbers (re-bill)`.
-2. **Mixed-policy entities.** `check` and `order_line` mix last-writer-wins fields (discount, note) and forward-only fields (`status`, `state`);
-   the engine's schema has one policy per entity (`rank` entities ignore `set` of non-rank fields). `LocalOpWriter` applies per-field
-   ranks (`RANKS` in `local-writer.ts`). The engine needs per-field policy or the entities need splitting. `DEMO_SCHEMAS` also lacks every restaurant
-   entity; the schemas must be generated from `api-specs/entities/restaurant`.
-3. Delivery of an op (`local`, `at_hub`, `in_cloud`) comes from `SyncEngine.delivery(seq)`; the sim stores it on the op row.
-4. `ids`: `monotonicIds` (`src/data/ids.ts`) is a UUIDv7 with a counter in `rand_a`, so rows created in one millisecond sort in creation order.
-   client-core `uuidv7` is not monotonic; the app sorts lines, moves and tickets by id. Suggest adopting it in client-core.
+## Defects and gaps found in client-core (not fixed here; the clone is read-only)
+
+1. **`rank` mutations are ignored on entity-level rank entities** (`seating`, `shift`, `business_day`, `kot_line`). The intent contract lists kind `rank` for them (`seating[rank]`, `shift[rank]`, `kot_line[rank]`, `business_day[rank]`), but `sync/apply.ts` case `"rank"` accepts only `insert` and `set`, so a table never closes, a shift never ends and a KDS item never advances. The runtime writer validates on the contract's kinds and then sends those mutations as `set` (`rankAsSet` in `runtime.ts`, marked WORKAROUND). Fix in `apply.ts` (accept `rank` there as it already does for `mixed`), then delete `rankAsSet`. Note the wire carries `set` meanwhile; svc-sync should treat both the same.
+2. **`engine.rows()` and `store.list()` hide tombstoned rows, and a `set` on a row that has no candidates marks it deleted.** A row put straight into the store (no op) disappears on its first `set`. The app avoids it by seeding through an op. Direct `put` of lww rows is not a supported way to load configuration.
+3. **The sync simulator is not importable from a published build** (`tsconfig.build.json` excludes `testkit`). An app test needs the sibling's sources. Suggest a `@hostry/client-core/testkit` export, built separately.
+4. **`ids`:** `monotonicIds` (`src/data/ids.ts`) is the app's UUIDv7 with a counter in `rand_a`, passed to the engine as `newId`, so rows created in one millisecond sort in creation order. client-core `uuidv7` is not monotonic and the screens sort by id. Suggest adopting it.
+
+ADR items still open from client-core's notes: op envelope with several document numbers (`docs`; svc-sync reads only `doc`); shape of the op's `pii` object (the builders still write customer name and phone into the op body); `op_too_large` is not enforced before recording; `session.open` is not recorded, so `sid` is the PIN session id, not a `session.open` op id (ADR-0005).
+
+## Where the app had to follow the contract
+
+- **Tickets without lines.** `order.items.move`, `order.line.cancel` and `kds.recall` write the `kot` row only. The MOVED and CANCEL paper tickets are built from the lines in hand at that moment (`kotDocFor(..., linesOf)`); the KDS shows a cancel ticket's items from the cancels that name it, a recall ticket shows the recalled ticket's items, and bumping a recall, cancel or moved ticket is a local acknowledgement. A MOVED ticket on the KDS shows its banner and table, no items.
+- **Availability** uses `availabilitySpec` (deterministic row id), so two devices meet on one `item_outlet` row.
+- **Reprint** records `bill.reprint` (`bill_reprint`: copy 1 is the first reprint, printed as Copy 2). The "ADR needed: audit of bill reprint" item is closed by the contract.
+- **Discount approval check** reads the snapshot before the write (inside the engine's transaction the op log is not a table).
+- `billing_settings.manual_book_codes` is still not an entity field; the seed carries it so book entry works. Tenancy registrations will carry it.
 
 ## Identity and approvals (stub)
 
-`StubIdentity` implements `IdentityPort`: tap-your-name PIN sign-in from an offline pack, 5-wrong delay and 10-wrong lock (`src/domain/pin-guard.ts`),
-own-PIN action proof, manager approval on the same device with an approval id (valid two minutes, approver differs from requester).
-Role to permission templates in `identity-stub.ts` are assumptions to be confirmed by ADR-0005 role templates and the security review. Real
-`PinLogin`, the offline pack and the proof stamped on ops arrive with client-core auth. Demo PINs are fixtures (1111, 2222, 3333, 4444), not secrets.
+`StubIdentity` implements `IdentityPort`: tap-your-name PIN sign-in from an offline pack, 5-wrong delay and 10-wrong lock (`src/domain/pin-guard.ts`), own-PIN action proof, manager approval on the same device with an approval id (valid two minutes, approver differs from requester). `IdentityPort` extends client-core's `PinLogin` (`members`, `signOut`; `Member` extends `MemberSummary`) and `asPinLogin()` gives the throwing `signIn` that interface has; `Runtime.sessions` is a client-core `SessionStore`. Role to permission templates in `identity-stub.ts` are assumptions for ADR-0005 role templates and the security review. Demo PINs are fixtures (1111, 2222, 3333, 4444), not secrets. The action `proof` is not stamped on ops yet.
 
-- **ui-kit gap.** `PinPad` is fixed length (default 4) and submits at that length; the design says "at least 4 digits, 6 for managers". The
-  demo uses 4 digits for everyone. Needs a variable-length mode (Enter to submit).
-- **ui-kit gap.** The toast dismiss button has no `data-testid` (the testid test allow-lists it).
+## ui-kit gaps (ui-kit not touched; both need a ui-kit commit)
+
+- **`PinPad` is fixed length** (default 4) and submits at that length; the design says at least 4 digits, 6 for managers. Needs `minLength`/`maxLength` with a submit on Enter or an OK key. The demo uses 4 digits for everyone. Not trivial (a behaviour change with its own tests), so not patched.
+- **Toast dismiss button has no `data-testid`** (`Toast.tsx`, the `Button` after the message). One line: `data-testid="toast-dismiss"`. The app's testid test allow-lists it until ui-kit has it.
 
 ## Printing
 
-`PrintHub` wraps client-core `PrintService`: per-printer queue with backoff, once-only job ids, and the A1.6 late-ticket rule (a KOT that is
-handed over or older than 15 minutes when it arrives is held for a person, never auto-printed). Printers and the drawer are the client-core
-fakes (`FakeReceiptPrinter`, `FakeKitchenPrinter`, `FakeCashDrawer`) behind `createFakePrintHub`; the native shell supplies real transports
-(ESC/POS over USB, LAN, Bluetooth) per `devices-and-printing`. No rasterizer is wired (no canvas in a browser test): Tamil and Malayalam
-station lines print the English kitchen name until the shell provides one.
+`PrintHub` wraps client-core `PrintService`: per-printer queue with backoff, once-only job ids, and the A1.6 late-ticket rule (a KOT that is handed over or older than 15 minutes when it arrives is held for a person, never auto-printed). Printers and the drawer are client-core fakes; the native shell supplies real transports. No rasterizer is wired: Tamil and Malayalam station lines print the English kitchen name until the shell provides one. The device that prints KOTs calls `ingestArrivedKot` for a ticket it did not create (the scripted trading day does this for the KDS station after a blackout); nothing calls it automatically from a sync round yet.
 
 ## Shell seam (ADR-0007)
 
-`src/shell/shell.ts` is the only place the app asks the host for anything (storage, network hint, chime, keep-awake). Tauri will implement it
-and also replace the store, printers, drawer and sync port in `src/runtime.ts`. There is no Rust or Tauri code here. `?device=pos|waiter|kds`
-selects the device kind in a browser (the shell reads it from activation later).
+`src/shell/shell.ts` is the only place the app asks the host for anything (storage, network hint, chime, keep-awake). Tauri will implement it and also replace the store, printers, drawer, signer and the hub and cloud transports in `src/runtime.ts` (`RuntimeOptions.store`, `signer`, `upstream`). `?device=pos|waiter|kds` selects the device kind in a browser.
 
 ## Contract mapping
 
-Every UI action records one intent from `api-specs sync/intents` through `data.write` (`src/data/trading/*`). Used: `seating.open`, `check.create`,
-`order.create`, `order.line.add`, `order.line.edit`, `order.line.void`, `order.line.cancel`, `order.items.move`, `order.table.move`, `order.table.merge`,
-`bill.new`, `bill.split`, `bill.merge`, `bill.cancel`, `bill.request`, `bill.present`, `bill.discount.apply`, `bill.discount.over_limit`, `bill.line.comp`,
-`bill.service_charge.remove`, `bill.customer_details.edit`, `kot.send`, `kds.status`, `kds.recall`, `kot.handover`, `kot.reprint`, `kot.print.ack`, `seating.close`,
-`bill.finalize`, `bill.manual_entry`, `payment.record`, `creditnote.issue`, `bill.rebill`, `drawer.cash_move`, `shift.open`, `shift.close`, `shift.close.any`,
-`day.open`, `day.close`, `menu.availability.set`.
-Not built: `bill.present.change` (reason chip after a Present), `payment.refund`, `drawer.open_no_sale`, `check.close_internal`, `menu.open_item`,
-`order.line.cancel.grace`, `bill.line.comp.allowance`, `series.activate`, `device.clock.confirm`, and every online-only action.
+Every UI action records one intent from `api-specs sync/intents` through `data.write` (`src/data/trading/*`). Used: `seating.open`, `check.create`, `order.create`, `order.line.add`, `order.line.edit`, `order.line.void`, `order.line.cancel`, `order.items.move`, `order.table.move`, `order.table.merge`, `bill.new`, `bill.split`, `bill.merge`, `bill.cancel`, `bill.request`, `bill.present`, `bill.discount.apply`, `bill.discount.over_limit`, `bill.line.comp`, `bill.service_charge.remove`, `bill.customer_details.edit`, `kot.send`, `kds.status`, `kds.recall`, `kot.handover`, `kot.reprint`, `kot.print.ack`, `seating.close`, `bill.finalize`, `bill.manual_entry`, `bill.reprint`, `payment.record`, `payment.refund`, `creditnote.issue`, `bill.rebill`, `drawer.cash_move`, `shift.open`, `shift.close`, `shift.close.any`, `day.open`, `day.close`, `menu.availability.set`. Read, not written: `business_day_revision` (cloud intent `day.revision.record`).
+Not built: `bill.present.change` (reason chip after a Present), `drawer.open_no_sale`, `check.close_internal`, `menu.open_item`, `order.line.cancel.grace`, `bill.line.comp.allowance`, `series.activate`, `device.clock.confirm`, `session.open`, `approval.grant`, and every online-only action.
 
-- **Bill reprint has no intent or permission in the registry.** The app checks `bill.reprint` (assumed) and counts copies in a device-local row.
-  `ADR needed: audit of bill reprint (intent and permission)`; AC 119 wants "DUPLICATE, Copy n".
-- Regime (`regular`, `composition`, `unregistered`), `specified_premises` and the bill-book series codes are read from `outlet_tax_profile` and
-  `billing_settings.manual_book_codes` until tenancy registrations sync; the entity files do not carry them on those rows.
-- The demo rule set (`src/data/seed.ts`) is a fixture, not tax advice; rates in production come only from the published rule set.
-
-## Performance and bundle
-
-Initial JS 83.6 KB gzip (CSS 5.7 KB) against the 250 KB budget (`pnpm build` runs `scripts/check-bundle.mjs`). Cold start to billing screen and the
-100 ms interaction budget are not measured here (needs the reference low-end Android device, ADR-0007); the data path is in-memory and every
-write is local.
+The demo rule set (`src/data/seed.ts`) is a fixture, not tax advice; rates in production come only from the published rule set.

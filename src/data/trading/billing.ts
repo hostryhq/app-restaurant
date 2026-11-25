@@ -147,7 +147,7 @@ export async function setCustomer(ctx: TradingCtx, checkId: string, c: { name?: 
   if (c.gstin && !validGstin(c.gstin)) throw new TradingError("bad_gstin");
   await ctx.data.write({
     intent: "bill.customer_details.edit",
-    pii: { customer_name: c.name, customer_gstin: c.gstin },
+    // customer_name and customer_gstin are pii fields of `check`: the engine moves them out of the op body by schema.
     build: () => [{ e: "check", id: checkId, k: "set", f: { ...(c.name !== undefined ? { customer_name: c.name } : {}), ...(c.gstin ? { customer_gstin: c.gstin.trim().toUpperCase() } : {}) } }],
   });
 }

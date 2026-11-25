@@ -47,7 +47,9 @@ export function Floor(): JSX.Element {
           onOpen={(checkId) => {
             const c = app.snap().get<Check>("check", checkId);
             const t = tableOfSeating(app, c?.seating_id);
-            if (t) app.go({ id: "order", tableId: t.id, checkId });
+            // A request opens the check review (RS12); a device that cannot bill opens the order.
+            if (app.can("bill.finalize")) app.go({ id: "review", checkId });
+            else if (t) app.go({ id: "order", tableId: t.id, checkId });
           }}
         />
       </Show>

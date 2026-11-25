@@ -15,19 +15,19 @@ Status: **built** (works end to end, covered by a test), **partial** (what is mi
 | RS08 Approval | built | `features/common.tsx` | Requester not offered; approver does not become the session user. |
 | RS09 Table actions | built | `features/order/TableActions.tsx` | New bill, split, move items, move table, merge tables, merge bills, free, cancel bill. |
 | RS10, RS11 Select lines, picker | built | `TableActions.tsx` | |
-| RS12 Bill requests, check review, Present, Issue invoice | partial | `Floor.tsx`, `Order.tsx`, `Tender.tsx` | Requests list on the floor; review is the order screen itself (discount, GSTIN on tender). No separate review screen. |
+| RS12 Bill requests, check review, Present, Issue invoice | built | `Floor.tsx`, `features/billing/Review.tsx`, `Tender.tsx` | A request opens the review (lines, total, discount and service charge, customer name and GSTIN, Present, Pay); a device that cannot bill opens the order. Request, Present, Pay, Exact is still 4 taps. |
 | RS13 Counter | built | `Order.tsx` | Quick items, code entry `3*12`, keyboard map. No scale or barcode wiring. |
 | RS14 Held and pending pickup | built | `features/billing/Held.tsx` | |
 | RS15 Tender | built | `features/billing/Tender.tsx` | Cash default, Exact (F9), quick cash, mixed tenders, N shares, GSTIN, Issue invoice, shift prompt. |
 | RS16 Discount, comp, charges | built | `features/order/DiscountSheet.tsx` | Percent or amount, reason, limit, approval; comp per line; remove service charge. Packing removal not built. |
 | RS17 Print queue | built | `features/print/PrintQueue.tsx` | |
 | RS18 Bills and reprint | built | `features/billing/Bills.tsx` | DUPLICATE with copy count; pay an unpaid bill. |
-| RS19 Credit note, re-bill | partial | `features/billing/Credit.tsx` | Credit note (lines or whole) and re-bill with GSTIN. Refund payment and credit-and-reopen not built. |
+| RS19 Credit note, refund, credit and reopen | built | `features/billing/Credit.tsx` | Credit note (lines or whole), re-bill with GSTIN, refund of a payment (at most what was paid), credit and reopen (unpaid bill only). Re-bill discount change and split are not offered yet; only the GSTIN change is. |
 | RS20 Shift close, cash moves | built | `features/shift/ShiftClose.tsx` | Blind count by denomination. |
-| RS21 Day close | partial | `features/shift/DayClose.tsx` | Blockers, carry over, force close shift, Z-report printed. Per-item Bill / Cancel buttons are the table actions; late-document revisions (`Z/.../R1`) not built. |
+| RS21 Day close | built | `features/shift/DayClose.tsx` | Blockers, carry over, force close shift, Z-report printed. Late documents (bills from a device that was offline during the close) are listed with their device and a banner for managers; the cloud's revision (`Z/.../R1`) shows its number and prints. Per-item Bill / Cancel buttons are the table actions. The "device not heard from 30 min" warning is not built. |
 | RS22 KDS | built | `features/kds/Kds.tsx` | Station filter, step, bump, recall, cancel and moved banners, Already given. |
-| RS23 Sync sheet | built | `features/sync/SyncSheet.tsx` | Includes the simulator switches (removed when the real runner lands). |
-| RS24 Exceptions | partial | `features/owner/Owner.tsx` | Book total mismatch, wastage cancels, over-limit discounts. Online conflicts and quarantine need the real engine. |
+| RS23 Sync sheet | built | `features/sync/SyncSheet.tsx` | State, pending, at hub, upstream, last sync, oldest pending. The hub and cloud switches show only on a runtime built with simulated links (tests). |
+| RS24 Exceptions | partial | `features/owner/Owner.tsx` | Book total mismatch, wastage cancels, over-limit discounts. The engine now exposes conflicts (`engine.conflicts()`) and held ops (`attentionOps`); listing them here is not built. |
 | RS25 Owner home | built | `Owner.tsx` | |
 | RS26 Reports | partial | `Owner.tsx` | Open-day report from the device; multi-day says it needs the internet. |
 | RS27 Settings | partial | `features/owner/Settings.tsx` | Read only, `strong_only` rows locked with the reason. |
@@ -47,6 +47,7 @@ Status: **built** (works end to end, covered by a test), **partial** (what is mi
   (duplicate copy count), 124, 125 (printer failure never blocks), 133 to 137 (tenders), 138, 139 (credit note, re-bill in one op), 220, 221, 233 (Present unnumbered, number at settlement).
 - Shift and day: AC 145, 146 (shift at first cash payment), 147, 148 (blind count and variance), 155, 157 (day close blockers, Z-report, next date after close).
 - Security and offline: AC 169, 172 (PIN rules), 173, 174 (approval), 178 (offline sign-in), 190 (`data-testid`), 191 (KDS with no PIN), 198 to 200 (sync chip states offline, at hub, synced; nothing blocks on the network).
-- Offline-first: whole trading day with no network, then reconnect: no op lost, op sequence and bill numbers gapless, delivery moves local to hub to cloud.
+- Offline-first: `src/trading-day.test.ts` runs a whole day on three devices (counter, captain tablet, KDS) and client-core's simulated hub and cloud: offline from the cloud all day, a blackout (KOT given by hand, no stale auto-print, paper bill-book entry), approvals, a re-bill (one op, two numbers), a blind count and day close, then the hub reaches the cloud. Asserted: equal state hash on all devices and the cloud's vector, unique gapless numbers per series, the Z-report equal to the bills, a cut mid-round and a lost acknowledgement lose nothing.
+- Corrections: `corrections.test.ts` (refund, credit and reopen, late documents and the cloud's revision).
 
 Not covered (stated, not skipped silently): AC 177 (Tamil and Malayalam layout: catalogues pending), AC 192 and 99 (cold start and 100 ms budgets need the reference device), AC 63 and 132 (UPI QR on the pre-bill), 142 (no-sale drawer open).

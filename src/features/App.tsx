@@ -8,6 +8,7 @@ import { Late } from "./blackout/Late";
 import { Bills } from "./billing/Bills";
 import { Credit } from "./billing/Credit";
 import { Held } from "./billing/Held";
+import { Review } from "./billing/Review";
 import { Tender } from "./billing/Tender";
 import { Floor } from "./floor/Floor";
 import { Kds } from "./kds/Kds";
@@ -39,6 +40,9 @@ function Screen(): JSX.Element {
         <Show when={orderView()} keyed>
           {(ov) => <Order tableId={ov.tableId} checkId={ov.checkId} />}
         </Show>
+      </Match>
+      <Match when={v().id === "review"}>
+        <Review checkId={(v() as { checkId: string }).checkId} />
       </Match>
       <Match when={v().id === "tender"}>
         <Tender checkId={(v() as { checkId: string }).checkId} exact={(v() as { exact?: boolean }).exact === true} />

@@ -14,7 +14,7 @@ export type Mode = "tables" | "counter" | "kitchen" | "owner";
 export type View =
   | { id: "floor" }
   | { id: "order"; tableId?: string; checkId?: string }
-  | { id: "review" }
+  | { id: "review"; checkId: string }
   | { id: "tender"; checkId: string; exact?: boolean }
   | { id: "held" }
   | { id: "bills" }
