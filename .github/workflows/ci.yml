@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  pull_request:
+    paths-ignore: ["**.md", "docs/**"]
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ts:
+    uses: hostryhq/.github/.github/workflows/ts-ci.yml@feat/phase1-ci
+    with:
+      package-manager: pnpm # or npm, per client-app-standard
+      # ui-kit and client-core are `link:` dependencies (sibling folders): the workflow checks them
+      # out next to this repo and builds them before install. Switch to @main once phase1-ci is merged.
+      sibling-repos: |
+        ui-kit
+        client-core
+
+  gitleaks:
+    uses: hostryhq/.github/.github/workflows/gitleaks.yml@main
+
+  # Single status check for the ruleset: "ci / required".
+  required:
+    if: always()
+    needs: [ts, gitleaks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: All required jobs passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done
