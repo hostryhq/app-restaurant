@@ -86,6 +86,9 @@ export const en: Readonly<Record<string, string>> = {
   "item.required": "Choose {group}",
 
   "send.notdelivered": "Not delivered to the kitchen. Saved on this device.",
+  "send.retry": "Retry",
+  "send.byhand": "Given by hand",
+  "send.verbal": "Told verbally",
 
   "cancel.title": "Cancel {qty} x {item}?",
   "cancel.qty": "Quantity to cancel",
@@ -131,6 +134,9 @@ export const en: Readonly<Record<string, string>> = {
   "discount.apply": "Apply",
   "discount.ask": "Ask manager",
   "discount.summary": "Discount {value}",
+  "discount.comp": "Comp: {item}",
+  "discount.comp.title": "Comp an item",
+  "discount.service": "Remove service charge",
   "discount.issued": "The invoice is issued. Use Re-bill or a credit note.",
 
   "tender.title": "Pay",
@@ -243,10 +249,6 @@ export const en: Readonly<Record<string, string>> = {
   "sync.open": "Sync status",
   "sync.title": "Sync status",
   "sync.state": "State",
-  "sync.state.synced": "Synced",
-  "sync.state.pending": "Saving",
-  "sync.state.offline": "Offline",
-  "sync.state.conflict": "Attention",
   "sync.pending": "Saved on this device",
   "sync.athub": "At hub",
   "sync.upstream": "Connected to",

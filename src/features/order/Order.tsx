@@ -18,7 +18,7 @@ import { parseCodeEntry, shortcutFor, SHORTCUT_SHEET } from "../../domain/keys";
 import type { Check, Item, KotHandover, KotLine, OpRow, OrderLine } from "../../domain/rows";
 import { lineTotalPaise } from "../../domain/lines";
 import { menuFrom, settingsFrom } from "../../data/context";
-import { addLine, billPlease, newCounterCheck, openTableCheck, present, removeDraft, sendKot, setLineQty } from "../../data/trading";
+import { addLine, billPlease, handover, newCounterCheck, openTableCheck, present, removeDraft, sendKot, setLineQty } from "../../data/trading";
 import { useApp } from "../app-state";
 import { BackButton, Empty } from "../common";
 import { checksOfTable, draftCount, linesOf, totals } from "../selectors";
@@ -87,10 +87,16 @@ export function Order(props: { tableId?: string | undefined; checkId?: string | 
     return id;
   };
 
-  const add = async (sel: LineSelection) => {
-    const id = await ensureCheck();
-    if (!id) return;
-    await app.run(() => addLine(app.rt.ctx, id, sel));
+  // Adds run one after another: a fast second tap or key press must find the check the first one opened, never open another.
+  let chain: Promise<unknown> = Promise.resolve();
+  const add = (sel: LineSelection): Promise<void> => {
+    const next = chain.then(async () => {
+      const id = await ensureCheck();
+      if (!id) return;
+      await app.run(() => addLine(app.rt.ctx, id, sel));
+    });
+    chain = next.catch(() => undefined);
+    return next;
   };
 
   const tapItem = (item: Item) => {
@@ -189,7 +195,23 @@ export function Order(props: { tableId?: string | undefined; checkId?: string | 
   const title = () => (counter() ? app.t("counter.title") : (table() as { name?: string } | undefined)?.name ?? "");
   const tokenLabel = () => (check()?.token_no ? app.t("counter.token", { n: check()?.token_no ?? 0 }) : "");
   const sentLines = () => lines().filter((l) => l.state === "sent");
-  const failedKot = createMemo(() => app.sync().upstream === "none" && app.jobs().some((j) => j.kind === "kot" && j.lastError));
+  // RS06: KOTs of this check the kitchen printer has not taken. Never a modal, never blocks the next order.
+  const failedKots = createMemo(() => {
+    const snap = app.snap();
+    return app.jobs().filter((j) => j.kind === "kot" && j.lastError && snap.get<{ check_id: string }>("kot", j.id)?.check_id === checkId());
+  });
+  const giveByHand = (mode: "by_hand" | "verbal") => {
+    for (const j of failedKots()) {
+      void app.run(async () => {
+        await handover(app.rt.ctx, j.id, mode);
+        app.rt.fakes.hub.remove(j.printerId, j.id);
+      });
+    }
+  };
+  const retryKots = () => {
+    for (const j of failedKots()) app.rt.fakes.hub.retry(j.printerId, j.id);
+    void app.rt.fakes.hub.flush();
+  };
 
   return (
     <section class="app-order" data-testid={counter() ? "counter-screen" : "order-screen"}>
@@ -222,9 +244,18 @@ export function Order(props: { tableId?: string | undefined; checkId?: string | 
           {app.t("order.billed.notice")}
         </InlineAlert>
       </Show>
-      <Show when={failedKot()}>
+      <Show when={failedKots().length > 0}>
         <InlineAlert kind="danger" data-testid="send-notdelivered">
           {app.t("send.notdelivered")}
+          <Button variant="secondary" data-testid="send-retry" onClick={retryKots}>
+            {app.t("send.retry")}
+          </Button>
+          <Button variant="secondary" data-testid="send-by-hand" onClick={() => giveByHand("by_hand")}>
+            {app.t("send.byhand")}
+          </Button>
+          <Button variant="secondary" data-testid="send-verbal" onClick={() => giveByHand("verbal")}>
+            {app.t("send.verbal")}
+          </Button>
         </InlineAlert>
       </Show>
 

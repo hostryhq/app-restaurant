@@ -1,9 +1,11 @@
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, Dialog, Input, parseRupeesToPaise, ReasonChips, SegmentedControl } from "@hostry/ui-kit";
 import { percentToBp } from "../../domain/discount";
 import type { Check, ReasonCode } from "../../domain/rows";
-import { applyDiscount, discountDecision } from "../../data/trading";
+import { applyDiscount, compLine, discountDecision, removeServiceCharge } from "../../data/trading";
+import { settingsFrom } from "../../data/context";
+import { linesOf } from "../selectors";
 import { useApp } from "../app-state";
 
 /**
@@ -31,6 +33,16 @@ export function DiscountSheet(props: { checkId: string; open: boolean; onClose: 
       setReason(undefined);
     },
   );
+
+  // Comp needs `bill.line.comp` (own PIN) or a manager's approval, and a reason from the discount list.
+  const comp = async (lineId: string) => {
+    const r = reason();
+    if (!r) return;
+    const proof = await app.askProof({ permission: "bill.line.comp", title: app.t("discount.comp.title") });
+    if (!proof.ok) return;
+    const ok = await app.run(() => compLine(app.rt.ctx, { lineId, reasonCodeId: r, ...(proof.approvalId ? { approvalId: proof.approvalId } : {}) }));
+    if (ok) props.onClose();
+  };
 
   const apply = async () => {
     const v = value();
@@ -66,6 +78,19 @@ export function DiscountSheet(props: { checkId: string; open: boolean; onClose: 
         <Button data-testid="discount-apply" disabled={value() === undefined || !reason()} onClick={() => void apply()}>
           {decision() === "ask_manager" ? app.t("discount.ask") : app.t("discount.apply")}
         </Button>
+        <h3>{app.t("discount.comp.title")}</h3>
+        <For each={linesOf(app, props.checkId)}>
+          {(l) => (
+            <Button variant="secondary" data-testid={`comp-${l.id}`} disabled={!reason()} onClick={() => void comp(l.id)}>
+              {app.t("discount.comp", { item: l.name })}
+            </Button>
+          )}
+        </For>
+        <Show when={settingsFrom((e) => app.snap().list(e)).service_charge_bp > 0 && app.can("bill.service_charge.remove")}>
+          <Button variant="secondary" data-testid="discount-service" onClick={() => void app.run(() => removeServiceCharge(app.rt.ctx, props.checkId), () => props.onClose())}>
+            {app.t("discount.service")}
+          </Button>
+        </Show>
       </Show>
     </Dialog>
   );

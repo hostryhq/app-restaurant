@@ -26,6 +26,8 @@ export interface PrintPort {
   flush(): Promise<number>;
   jobs(): QueueJob[];
   retry(printerId: string, jobId: string): boolean;
+  /** Drop a queued job a person chose not to print (a KOT given by hand never prints as an original). */
+  remove(printerId: string, jobId: string): boolean;
   lateTickets(): readonly LateTicket[];
   printLate(id: string): boolean;
   dismissLate(id: string): boolean;
@@ -90,6 +92,12 @@ export class PrintHub implements PrintPort {
 
   retry(printerId: string, jobId: string): boolean {
     const ok = this.svc.queue(printerId).retry(jobId);
+    return ok;
+  }
+
+  remove(printerId: string, jobId: string): boolean {
+    const ok = this.svc.queue(printerId).remove(jobId);
+    this.emit();
     return ok;
   }
 
