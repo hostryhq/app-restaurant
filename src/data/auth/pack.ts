@@ -68,6 +68,9 @@ export function packFromJson(raw: unknown): DevicePack {
 /** The stream of the device's outlet (ADR-0002). */
 export const outletStreamOf = (pack: Pick<DevicePack, "outletId">): string => `outlet:${pack.outletId}`;
 
+/** The stream of the device's tenant (`tenant:<id>`): tenant-level ops (tax rule sets, tenant configuration) are recorded and synced here, never on the outlet stream (F4b). */
+export const tenantStreamOf = (pack: Pick<DevicePack, "tenantId">): string => `tenant:${pack.tenantId}`;
+
 /** The stream of the device's brand (`brand:<id>`), from the pack's `brand_id`: brand-level ops (menu, prices, reasons) are recorded here, never on the outlet stream. */
 export const brandStreamOf = (pack: Pick<DevicePack, "brandId">): string => `brand:${pack.brandId}`;
 

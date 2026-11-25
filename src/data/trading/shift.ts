@@ -1,4 +1,4 @@
-import { businessDayId, type BillRow, type CreditNoteRow, type PaymentRow, type ZReportDoc } from "@hostry/client-core";
+import { businessDayId, canonicalize, type BillRow, type CreditNoteRow, type PaymentRow, type ZReportDoc } from "@hostry/client-core";
 import { dayBlockers, expectedCash, lateDocuments, refundTotal, seriesRangesOf, zNumber, zTotals, type DayBlocker } from "../../domain/shift-day";
 import { liveQty } from "../../domain/lines";
 import type { BusinessDay, BusinessDayRevision, CashEvent, DayClose, Check, CheckPresent, OpRow, OrderLine, OrderLineCancel, Shift, ShiftClose } from "../../domain/rows";
@@ -104,6 +104,8 @@ export async function closeDay(ctx: TradingCtx): Promise<{ zNumber: string; tota
   const z = zNumber(day.business_date, ctx.deviceCode);
   const refunds = refundTotal(day.business_date, list("refund") as unknown as Array<{ business_date: string; amount_paise: number }>);
   const ranges = seriesRangesOf([...bills, ...(list("credit_note") as unknown as CreditNoteRow[])].filter((d) => d.business_date === day.business_date));
+  // What this device holds at the close: the vector says which ops the printed Z covers, `cutoff_at` is the instant (late-bill rule).
+  const cutoff = canonicalize(await ctx.vector());
   await ctx.data.write({
     intent: "day.close",
     build: (b) => [
@@ -115,7 +117,8 @@ export async function closeDay(ctx: TradingCtx): Promise<{ zNumber: string; tota
         f: {
           business_day_id: day.id,
           z_number: z,
-          cutoff: new Date(b.now).toISOString(),
+          cutoff,
+          cutoff_at: new Date(b.now).toISOString(),
           gross_paise: t.gross,
           discount_paise: t.discount,
           net_paise: t.net,

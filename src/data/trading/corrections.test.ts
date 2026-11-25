@@ -89,12 +89,22 @@ describe("RS21 late documents and Z revisions", () => {
     const late = await sale(two, "it-vada", 1000, "card");
     expect(late.number).toBe("B3K/2627/000001");
 
-    await T.closeDay(one.rt.ctx); // counter 1 closes: it has never heard of counter 2's bill
+    const heldAtClose = await one.rt.engine.vector();
+    const closedAt = one.clock.now();
+    const z = await T.closeDay(one.rt.ctx); // counter 1 closes: it has never heard of counter 2's bill
+    // F22: cutoff is the version vector the device held (never a time); cutoff_at is the instant, an RFC 3339 UTC string.
+    const dc = rows<{ cutoff: string; cutoff_at: string }>(one.rt, "day_close")[0]!;
+    expect(JSON.parse(dc.cutoff)).toEqual(heldAtClose);
+    expect(dc.cutoff_at).toBe(new Date(closedAt).toISOString());
     expect(T.lateDays(list(one))).toEqual([]);
 
     await net.links({ hub: true }); // counter 2 is back: its bill arrives after the close, dated the same day
     const days = T.lateDays(list(one));
     expect(days).toHaveLength(1);
+    // The Z plus its late documents equal all the bills of the day.
+    const all = rows<Bill>(one.rt, "bill");
+    expect(z.billCount + days[0]!.billNumbers.length).toBe(all.length);
+    expect(z.totalPaise + all.filter((b) => days[0]!.billNumbers.includes(b.number)).reduce((s, b) => s + b.total_paise, 0)).toBe(all.reduce((s, b) => s + b.total_paise, 0));
     expect(days[0]).toMatchObject({ date: "2026-11-24", billNumbers: ["B3K/2627/000001"], noteNumbers: [], devices: [two.rt.deviceId], revisions: [] });
     expect(rows<Bill>(one.rt, "bill").find((b) => b.number === "B3K/2627/000001")?.business_date).toBe("2026-11-24");
     expect(rows<{ status: string }>(one.rt, "business_day")[0]?.status).toBe("closed"); // never reopened

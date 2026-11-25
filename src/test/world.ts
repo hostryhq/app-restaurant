@@ -2,7 +2,7 @@ import { KeyRing, SoftwareSigner } from "@hostry/client-core";
 import { FakeNode } from "@hostry/client-core/testing";
 import { ensureDayOpen } from "../data/trading/orders";
 import { createRuntime, type Runtime, type RuntimeOptions } from "../runtime";
-import { outletStreamOf } from "../data/auth/pack";
+import { outletStreamOf, tenantStreamOf } from "../data/auth/pack";
 import { demoPack, type DemoPackOptions } from "../fixtures/demo-pack";
 import { DEMO_OUTLET_ID, DEMO_TENANT_ID, seedDemoLocal } from "../fixtures/demo-outlet";
 
@@ -20,6 +20,8 @@ export class TestClock {
 
 /** The demo outlet's stream: the pack of every test device names this outlet. */
 export const OUTLET_STREAM = outletStreamOf({ outletId: DEMO_OUTLET_ID });
+/** The demo tenant's stream: tenant-level ops (tax rule sets) travel here, not on the outlet stream. */
+export const TENANT_STREAM = tenantStreamOf({ tenantId: DEMO_TENANT_ID });
 
 /** Test device options: what the demo pack is built from, plus runtime switches. */
 export type WorldOptions = DemoPackOptions & Pick<RuntimeOptions, "autoSync" | "store" | "signer"> & { seed?: boolean };
@@ -47,7 +49,7 @@ export class Net {
     const n = new Net(clock);
     const cloudSigner = await SoftwareSigner.generate("cloud-key");
     await n.ring.addCloudKey("cloud-key", cloudSigner.publicB64);
-    const common = { tenantId: DEMO_TENANT_ID, streams: [OUTLET_STREAM], verifier: n.ring, now: clock.now };
+    const common = { tenantId: DEMO_TENANT_ID, streams: [OUTLET_STREAM, TENANT_STREAM], verifier: n.ring, now: clock.now };
     n.cloud = new FakeNode({ role: "cloud", nodeId: "cloud", cloudSigner, ...common });
     n.hub = new FakeNode({ role: "hub", nodeId: "hub-1", ...common });
     return n;

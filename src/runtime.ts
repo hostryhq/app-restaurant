@@ -20,7 +20,7 @@ import {
 import { AppData } from "./data/app-data";
 import { monotonicIds } from "./data/ids";
 import { PackIdentity } from "./data/auth/pack-identity";
-import { brandStreamOf, outletStreamOf, type DeviceKind, type DevicePack, type PinProver } from "./data/auth/pack";
+import { brandStreamOf, outletStreamOf, tenantStreamOf, type DeviceKind, type DevicePack, type PinProver } from "./data/auth/pack";
 import { OpLog } from "./data/op-log";
 import type { IdentityPort, OpWriter, RecordSpec, SyncPort } from "./data/ports";
 import type { TradingCtx } from "./data/trading/ctx";
@@ -108,6 +108,7 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   const deviceId = pack.deviceId;
   const outletStream = outletStreamOf(pack);
   const brandStream = brandStreamOf(pack);
+  const tenantStream = tenantStreamOf(pack);
   const store = o.store ?? new InMemoryStore(pack.tenantId);
   const newId = monotonicIds(now);
 
@@ -120,7 +121,7 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
     schemas: restaurantRegistry(),
     deviceId,
     outletStream,
-    streams: [outletStream, brandStream],
+    streams: [outletStream, brandStream, tenantStream],
     signer,
     verifier,
     packVersion: pack.packV,
@@ -157,7 +158,7 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
     onError: () => undefined, // offline is the normal state; the status says so
   });
   const sync = createSyncPort(runner, engine);
-  const engineWriter = new EngineOpWriter(engine, { streams: { brand: brandStream, tenant: outletStream } });
+  const engineWriter = new EngineOpWriter(engine, { streams: { brand: brandStream, tenant: tenantStream } });
   const autoSync = o.autoSync ?? false;
   // Holds the runtime once it exists: the writer re-opens a KDS device session through it.
   const ref: { rt?: Runtime } = {};
@@ -236,7 +237,7 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   const fakes = createFakePrintHub(now);
   if (o.devSeed) await o.devSeed(store);
   await data.refresh();
-  const ctx: TradingCtx = { data, session: () => current, now, newId, print: fakes.hub, outletId: pack.outletId, deviceCode, manualBookCodes: pack.manualBooks, nameOf: (id) => names.get(id) ?? id };
+  const ctx: TradingCtx = { data, session: () => current, now, newId, print: fakes.hub, outletId: pack.outletId, deviceCode, manualBookCodes: pack.manualBooks, nameOf: (id) => names.get(id) ?? id, vector: () => engine.vector() };
 
   const links = o.upstream?.links;
   const rt: Runtime = {

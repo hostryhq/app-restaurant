@@ -19,6 +19,8 @@ export type TradingCtx = {
   manualBookCodes: string[];
   /** Member display name for printed documents. */
   nameOf: (memberId: string) => string;
+  /** The outlet stream's version vector this device holds now `{origin: seq}`: what a Z-report covers (day_close.cutoff). */
+  vector: () => Promise<Record<string, number>>;
 };
 
 export class PermissionError extends Error {
