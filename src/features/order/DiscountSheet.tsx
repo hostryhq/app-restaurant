@@ -38,7 +38,7 @@ export function DiscountSheet(props: { checkId: string; open: boolean; onClose: 
   const comp = async (lineId: string) => {
     const r = reason();
     if (!r) return;
-    const proof = await app.askProof({ permission: "bill.line.comp", title: app.t("discount.comp.title") });
+    const proof = await app.askProof({ target: lineId, reason: r, permission: "bill.line.comp", title: app.t("discount.comp.title") });
     if (!proof.ok) return;
     const ok = await app.run(() => compLine(app.rt.ctx, { lineId, reasonCodeId: r, ...(proof.approvalId ? { approvalId: proof.approvalId } : {}) }));
     if (ok) props.onClose();

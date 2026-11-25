@@ -32,7 +32,8 @@ export type View =
   | { id: "menu" }
   | { id: "setup" };
 
-export type ProofRequest = { permission: string; title: string; summary?: string };
+/** `target` (the record the action is on) and `reason` (a reason code id) are recorded on the approval and bound into its proof when the screen knows them. */
+export type ProofRequest = { permission: string; title: string; summary?: string; target?: string; reason?: string };
 export type ProofResult = { ok: true; approvalId?: string } | { ok: false };
 
 export type App = {

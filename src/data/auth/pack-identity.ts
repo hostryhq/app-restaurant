@@ -1,7 +1,8 @@
 import type { Session } from "@hostry/client-core";
 import { can } from "@hostry/client-core";
 import { afterAttempt, checkAttempt, emptyGuard, type GuardState } from "../../domain/pin-guard";
-import type { ApproveResult, IdentityPort, Member, PinResult } from "../ports";
+import { approvalActionHash } from "@hostry/client-core";
+import type { ApprovalAbout, ApproveResult, IdentityPort, Member, PinResult } from "../ports";
 import type { ApprovalProofInput, DevicePack, PinProver, SessionProofInput } from "./pack";
 
 /**
@@ -15,7 +16,7 @@ import type { ApprovalProofInput, DevicePack, PinProver, SessionProofInput } fro
 /** What a successful sign-in must record as `session.open` (ADR-0005 A3.1): the proof and the integers it binds. */
 export type SessionOpen = { sid: string; memberId: string; proof: string; packV: number; pinV: number; openedAt: string };
 /** What a successful approval must record as `approval.grant` (A3.1). */
-export type ApprovalGrant = { approvalId: string; approverId: string; requesterId: string; permission: string; proof: string; packV: number; pinV: number; at: string };
+export type ApprovalGrant = { approvalId: string; approverId: string; requesterId: string; permission: string; target: string; reason: string; actionHash: string; proof: string; packV: number; pinV: number; at: string };
 
 export type PackIdentityHooks = {
   sessionOpened?(o: SessionOpen): Promise<void>;
@@ -107,7 +108,7 @@ export class PackIdentity implements IdentityPort {
     return can(this.sessionFor(memberId, "probe"), permission, this.pack.outletId, new Date(this.now()));
   }
 
-  async approve(approverId: string, pin: string, permission: string, requesterId: string): Promise<ApproveResult> {
+  async approve(approverId: string, pin: string, permission: string, requesterId: string, about: ApprovalAbout = {}): Promise<ApproveResult> {
     if (approverId === requesterId) return { ok: false, reason: "same" };
     const m = this.pack.members.find((x) => x.memberId === approverId);
     if (!m) return { ok: false, reason: "wrong" };
@@ -116,11 +117,14 @@ export class PackIdentity implements IdentityPort {
     if (!g.ok) return { ok: false, reason: g.reason === "locked" ? "locked" : "wrong" };
     const approvalId = `appr-${this.pack.deviceId}-${this.now().toString(36)}-${++this.n}`;
     const at = this.stamp();
-    const input: ApprovalProofInput = { approvalId, approverId, pin, permission, requesterId, deviceId: this.pack.deviceId, packV: this.pack.packV, pinV: m.pinV, at };
+    const target = about.target ?? "";
+    const reason = about.reason ?? "";
+    const actionHash = await approvalActionHash({ approvalId, permission, requesterId, target });
+    const input: ApprovalProofInput = { approvalId, approverId, pin, permission, requesterId, actionHash, target, reason, deviceId: this.pack.deviceId, packV: this.pack.packV, pinV: m.pinV, at };
     const proof = await this.o.prover.approvalProof(input);
     this.after(approverId, proof !== undefined);
     if (proof === undefined) return { ok: false, reason: "wrong" };
-    await this.o.hooks?.approvalGranted?.({ approvalId, approverId, requesterId, permission, proof, packV: this.pack.packV, pinV: m.pinV, at });
+    await this.o.hooks?.approvalGranted?.({ approvalId, approverId, requesterId, permission, target, reason, actionHash, proof, packV: this.pack.packV, pinV: m.pinV, at });
     return { ok: true, approvalId, approverName: m.displayName };
   }
 

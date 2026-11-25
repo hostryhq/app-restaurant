@@ -36,7 +36,7 @@ export function Credit(props: { billId: string }): JSX.Element {
     const r = reason();
     if (!r) return;
     const perm = { credit: "bill.credit_note.create", rebill: "bill.rebill", reopen: "bill.credit_note.create", refund: "payment.refund" }[mode()];
-    const proof = await app.askProof({ permission: perm, title: app.t({ credit: "credit.title", rebill: "credit.rebill", reopen: "credit.reopen", refund: "credit.refund.mode" }[mode()]) });
+    const proof = await app.askProof({ target: props.billId, reason: r, permission: perm, title: app.t({ credit: "credit.title", rebill: "credit.rebill", reopen: "credit.reopen", refund: "credit.refund.mode" }[mode()]) });
     if (!proof.ok) return;
     const approval = proof.approvalId ? { approvalId: proof.approvalId } : {};
     if (mode() === "refund") {

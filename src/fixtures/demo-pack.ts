@@ -115,7 +115,7 @@ async function hmac(pin: string, memberId: string, pinV: number, msg: string): P
 }
 
 const sessionMsg = (i: Omit<SessionProofInput, "pin">): string => ["session", i.sid, i.deviceId, i.memberId, i.packV, i.pinV, i.openedAt].join("|");
-const approvalMsg = (i: Omit<ApprovalProofInput, "pin">): string => ["approval", i.approvalId, i.permission, i.requesterId, i.approverId, i.deviceId, i.packV, i.pinV, i.at].join("|");
+const approvalMsg = (i: Omit<ApprovalProofInput, "pin">): string => ["approval", i.approvalId, i.permission, i.requesterId, i.approverId, i.actionHash, i.target, i.reason, i.deviceId, i.packV, i.pinV, i.at].join("|");
 
 /** Fixture prover: checks the PIN against the demo list and makes an HMAC proof. `verify*` stands in for the identity service (tests). */
 export class DemoProver implements PinProver {

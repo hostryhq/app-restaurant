@@ -34,7 +34,7 @@ export function CancelDialog(props: { lineId: string | undefined; onClose: () =>
     const l = line();
     const r = reason();
     if (!l || !r) return;
-    const proof = await app.askProof({ permission: "order.line.cancel", title: app.t("cancel.title", { qty: qty(), item: l.name }), summary: app.t("cancel.title", { qty: qty(), item: l.name }) });
+    const proof = await app.askProof({ target: l.id, reason: r, permission: "order.line.cancel", title: app.t("cancel.title", { qty: qty(), item: l.name }), summary: app.t("cancel.title", { qty: qty(), item: l.name }) });
     if (!proof.ok) return;
     const done = await app.run(() => cancelSentLine(app.rt.ctx, { lineId: l.id, qtyMilli: qty() * 1000, reasonCodeId: r, ...(proof.approvalId ? { approvalId: proof.approvalId } : {}) }));
     if (done) props.onClose();

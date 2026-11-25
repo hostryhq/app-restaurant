@@ -5,8 +5,10 @@ import {
   SoftwareSigner,
   SyncEngine,
   SyncRunner,
+  approvalGrantSpec,
   createSyncPort,
   restaurantRegistry,
+  sessionOpenSpec,
   type LocalStore,
   type SealVerifier,
   type Session,
@@ -189,12 +191,14 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
     stamp: () => engine.stampTime(),
     hooks: {
       sessionOpened: async (s) => {
-        await writer.record({ intent: "session.open", actor: s.memberId, sid: s.sid, proof: s.proof, pinV: s.pinV, at: s.openedAt, build: () => [] });
+        await writer.record(sessionOpenSpec({ sid: s.sid, actor: s.memberId, type: "pin", proof: s.proof, pinV: s.pinV, at: s.openedAt }));
       },
       approvalGranted: async (a) => {
         // The grant belongs to the session of the device in use (the requester's), under the approver's name.
         const sid = current?.sessionId ?? "system";
-        await writer.record({ intent: "approval.grant", actor: a.approverId, sid, approval: a.approvalId, proof: a.proof, pinV: a.pinV, build: () => [] });
+        await writer.record(
+          approvalGrantSpec({ approvalId: a.approvalId, approverId: a.approverId, requesterId: a.requesterId, permission: a.permission, target: a.target, reason: a.reason, actionHash: a.actionHash, sid, proof: a.proof, pinV: a.pinV }),
+        );
       },
     },
   });
@@ -239,16 +243,31 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   };
 }
 
-/** Device session of a KDS screen: no member, no PIN, only the kitchen's permissions (AC 191). */
-export function deviceSession(rt: Runtime): Session {
+/**
+ * Device session of a KDS screen: no member, no PIN, only the kitchen's permissions (AC 191). The session id carries the
+ * device id, so one origin never reuses another device's `sid` (identity refuses a sid seen with another device).
+ */
+export function deviceSession(rt: Runtime, sid = `s-${rt.pack.deviceId}-device`): Session {
   return {
     tenantId: rt.pack.tenantId,
     memberId: `device:${rt.pack.deviceId}`,
     deviceId: rt.pack.deviceId,
-    sessionId: "s-device",
+    sessionId: sid,
     kind: "shared",
     grants: [{ outlets: [rt.pack.outletId], perms: ["kds.bump", "menu.availability.set"] }],
     expiresAt: new Date(rt.now() + 365 * 86_400_000).toISOString(),
     offline: true,
   };
+}
+
+/**
+ * Opens the KDS device session: makes it the current session, then records `session.open` of type device (actor
+ * `device:<origin>`, no proof). The sync gateway types a session from that record and attributes the screen's ops to the
+ * device (finding F15). A fresh session id on every start.
+ */
+export async function openDeviceSession(rt: Runtime): Promise<Session> {
+  const s = deviceSession(rt, `s-${rt.pack.deviceId}-${rt.now().toString(36)}`);
+  rt.setSession(s);
+  await rt.writer.record(sessionOpenSpec({ sid: s.sessionId, actor: s.memberId, type: "device" }));
+  return s;
 }

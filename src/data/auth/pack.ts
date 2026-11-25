@@ -73,6 +73,10 @@ export type ApprovalProofInput = {
   pin: string;
   permission: string;
   requesterId: string;
+  /** What the approval record holds and the proof binds (ADR-0005 A3.1 item 2): the action hash, the record the approval is for and the reason. */
+  actionHash: string;
+  target: string;
+  reason: string;
   deviceId: string;
   packV: number;
   pinV: number;

@@ -22,11 +22,14 @@ export type ApproveResult =
  * client-core's `PinLogin`: `members()` and `signOut()` are the same; `signIn` returns a result instead of throwing, so a
  * screen can show the delay and lock states, and `asPinLogin` adapts it to the throwing form the core interface has.
  */
+/** The record the approval is for and the reason, when the screen knows them: bound into the approval proof and recorded on `approval.grant`. */
+export type ApprovalAbout = { target?: string; reason?: string };
+
 export interface IdentityPort extends Pick<PinLogin, "signOut"> {
   members(): Promise<Member[]>;
   signIn(memberId: string, pin: string): Promise<PinResult>;
   /** Approver check on the same device: the approver does not become the session user (ADR-0005 s8). */
-  approve(approverId: string, pin: string, permission: string, requesterId: string): Promise<ApproveResult>;
+  approve(approverId: string, pin: string, permission: string, requesterId: string, about?: ApprovalAbout): Promise<ApproveResult>;
   /** Members who hold `permission` and are not `exceptMemberId`. */
   approversFor(permission: string, exceptMemberId: string): Promise<Member[]>;
   /** Own-PIN re-entry for an action proof in a PIN session. */

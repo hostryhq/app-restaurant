@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { OpEnvelope } from "@hostry/client-core";
+import { approvalActionHash, type OpEnvelope } from "@hostry/client-core";
 import { demoPack } from "../../fixtures/demo-pack";
-import { deviceSession } from "../../runtime";
+import { deviceSession, openDeviceSession } from "../../runtime";
 import { OUTLET_STREAM, TestClock, world, type World } from "../../test/world";
 import * as T from "../trading";
 import { packFromJson, PackError } from "./pack";
@@ -24,6 +24,8 @@ describe("ops carry PIN-derived proofs (ADR-0005 A2.1, A3.1)", () => {
     const { pack, prover } = demoPack({ now: new TestClock().now });
     expect(op.actor).toBe("m-asha");
     expect(op.sid).toBe(w.rt.session()?.sessionId);
+    // F15: the gateway types the session from the session record of the op.
+    expect(op.muts).toEqual([{ e: "session", id: op.sid, k: "insert", f: { type: "pin" } }]);
     expect(typeof op.proof).toBe("string");
     expect(typeof (op.pack_v as unknown)).toBe("number");
     expect(op.pack_v as unknown).toBe(pack.packV);
@@ -51,16 +53,21 @@ describe("ops carry PIN-derived proofs (ADR-0005 A2.1, A3.1)", () => {
   it("approval.grant carries the approver's action proof, under the approver's name", async () => {
     const w = await world();
     await w.signIn("Asha");
-    const r = await w.rt.identity.approve("m-meena", "3333", "bill.discount.over_limit", "m-asha");
+    const r = await w.rt.identity.approve("m-meena", "3333", "bill.discount.over_limit", "m-asha", { target: "line-7", reason: "rc-1" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const grant = (await ownOps(w)).find((o) => o.intent === "approval.grant")!;
+    // F15: the approval record holds what the proof binds; the gateway reads it from the op.
+    const actionHash = await approvalActionHash({ approvalId: r.approvalId, permission: "bill.discount.over_limit", requesterId: "m-asha", target: "line-7" });
+    expect(grant.muts).toEqual([
+      { e: "approval", id: r.approvalId, k: "insert", f: { approver: "m-meena", permission: "bill.discount.over_limit", requester: "m-asha", action_hash: actionHash, target: "line-7", reason: "rc-1" } },
+    ]);
     const { pack, prover } = demoPack({ now: new TestClock().now });
     expect(grant.actor).toBe("m-meena");
     expect(grant.approval).toBe(r.approvalId);
     expect(typeof grant.proof).toBe("string");
     const pinV = pack.members.find((m) => m.memberId === "m-meena")!.pinV;
-    expect(await prover.verifyApproval({ proof: grant.proof!, approvalId: r.approvalId, approverId: "m-meena", permission: "bill.discount.over_limit", requesterId: "m-asha", deviceId: grant.origin, packV: pack.packV, pinV, at: grant.at })).toBe(true);
+    expect(await prover.verifyApproval({ proof: grant.proof!, approvalId: r.approvalId, approverId: "m-meena", permission: "bill.discount.over_limit", requesterId: "m-asha", actionHash, target: "line-7", reason: "rc-1", deviceId: grant.origin, packV: pack.packV, pinV, at: grant.at })).toBe(true);
     // A wrong approver PIN records no grant.
     const bad = await w.rt.identity.approve("m-meena", "0000", "bill.discount.over_limit", "m-asha");
     expect(bad.ok).toBe(false);
@@ -89,6 +96,21 @@ describe("configuration comes from the device's pack, not from constants", () =>
     expect(s.memberId).toBe(`device:${w.rt.deviceId}`);
     expect(s.grants[0]!.outlets).toEqual([w.rt.pack.outletId]);
     expect(w.rt.pack.series).toEqual([]);
+  });
+
+  it("a KDS opens its device session with a session.open of type device under device:<origin> and no proof (F15)", async () => {
+    const w = await world({ deviceKind: "kds", deviceCode: "K9K", billing: false });
+    const s = await openDeviceSession(w.rt);
+    expect(w.rt.session()).toEqual(s);
+    const open = (await ownOps(w)).filter((o) => o.intent === "session.open" && o.actor.startsWith("device:"));
+    expect(open).toHaveLength(1);
+    const op = open[0]!;
+    expect(op.actor).toBe(`device:${w.rt.deviceId}`);
+    expect(op.sid).toBe(s.sessionId);
+    expect(op.muts).toEqual([{ e: "session", id: s.sessionId, k: "insert", f: { type: "device" } }]);
+    expect(op.proof).toBeUndefined();
+    // Later ops of the KDS name that session.
+    expect(w.rt.engine.session).toEqual({ actor: `device:${w.rt.deviceId}`, sid: s.sessionId });
   });
 
   it("a malformed pack is refused", () => {

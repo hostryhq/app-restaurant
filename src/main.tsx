@@ -7,7 +7,7 @@ import { createAppTranslator } from "./i18n";
 import { InMemoryStore, IndexedDbPersistence, type LocalStore } from "@hostry/client-core";
 import { packFromJson, type DevicePack, type PinProver } from "./data/auth/pack";
 import { createShell } from "./shell/shell";
-import { createRuntime, deviceSession } from "./runtime";
+import { createRuntime, openDeviceSession } from "./runtime";
 
 // Touch density everywhere (the Windows counter is a desktop layout with touch-size controls). The device kind comes from
 // activation in the native shell; in a browser it is a query parameter so ui-tester can open each mode: ?device=pos|waiter|kds.
@@ -66,7 +66,6 @@ void boot().then(async (b) => {
   const empty = (await store.list("business_day")).length === 0 && (await store.list("item")).length === 0;
   const runtime = await createRuntime({ pack, prover, store, autoSync: true, ...(b.devSeed && empty ? { devSeed: b.devSeed } : {}) });
   runtime.sync.start();
-  const session = pack.deviceKind === "kds" ? deviceSession(runtime) : undefined;
-  if (session) runtime.setSession(session);
+  const session = pack.deviceKind === "kds" ? await openDeviceSession(runtime) : undefined;
   render(() => <App runtime={runtime} translator={createAppTranslator()} {...(session ? { session } : {})} />, root);
 });

@@ -40,7 +40,7 @@ export function ProofHost(): JSX.Element {
       return;
     }
     if (!r.approverId) return;
-    const res = await app.rt.identity.approve(r.approverId, r.pin, req.permission, me);
+    const res = await app.rt.identity.approve(r.approverId, r.pin, req.permission, me, { ...(req.target ? { target: req.target } : {}), ...(req.reason ? { reason: req.reason } : {}) });
     if (res.ok) app.resolveProof({ ok: true, approvalId: res.approvalId });
     else setError(app.t(res.reason === "same" ? "approval.same" : res.reason === "not_allowed" ? "error.permission" : "login.wrong"));
   };

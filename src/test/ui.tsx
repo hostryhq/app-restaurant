@@ -3,7 +3,7 @@ import { flush } from "solid-js";
 import { expect } from "vitest";
 import { App } from "../features/App";
 import { createAppTranslator } from "../i18n";
-import { deviceSession } from "../runtime";
+import { openDeviceSession } from "../runtime";
 import { world, type World, type WorldOptions } from "./world";
 
 export const byId = (id: string): HTMLElement => {
@@ -53,8 +53,7 @@ export async function mountApp(o: WorldOptions & { signedIn?: keyof typeof IDS; 
   let taps = 0;
   let keys = 0;
   const translator = createAppTranslator();
-  const device = w.rt.deviceKind === "kds" ? deviceSession(w.rt) : undefined;
-  if (device) w.rt.setSession(device);
+  const device = w.rt.deviceKind === "kds" ? await openDeviceSession(w.rt) : undefined;
   render(() => <App runtime={w.rt} translator={translator} {...(device ? { session: device } : {})} />);
   const ui: Ui = {
     ...w,

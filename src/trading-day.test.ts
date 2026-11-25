@@ -3,7 +3,7 @@ import { seriesGaps, type BillRow, type CreditNoteRow, type OpEnvelope } from "@
 import type { OpRow } from "./domain/rows";
 import * as T from "./data/trading";
 import { KITCHEN_PRINTER } from "./data/trading/bill-printer";
-import { deviceSession } from "./runtime";
+import { openDeviceSession } from "./runtime";
 import { Net, OUTLET_STREAM, rows, world, type World } from "./test/world";
 
 const list = (w: World) => (e: string) => w.rt.data.snapshot().list(e);
@@ -31,7 +31,7 @@ describe("trading day: three devices, offline all day, a blackout, then reconnec
     await net.links({ hub: true });
     expect(rows(captain.rt, "item").length).toBeGreaterThan(5);
     expect(rows(kds.rt, "business_day")).toHaveLength(1);
-    kds.rt.setSession(deviceSession(kds.rt));
+    await openDeviceSession(kds.rt);
     expect(kds.rt.sync.status()).toMatchObject({ online: true, upstream: "hub" }); // the internet is out; the LAN hub answers
 
     // Lunch: the captain takes two tables and sends to the kitchen and the bar; the KDS bumps; everything is offline from the cloud.
@@ -237,7 +237,7 @@ describe("permissions by role (the check is on the permission, never the role na
     const { checkId } = await T.openTableCheck(w.rt.ctx, "tb-1");
     await T.addLine(w.rt.ctx, checkId, { itemId: "it-vada", qtyMilli: 1000 });
     const [kot] = await T.sendKot(w.rt.ctx, checkId);
-    w.rt.setSession(deviceSession(w.rt));
+    await openDeviceSession(w.rt);
     await T.bump(w.rt.ctx, kot!);
     await expect(T.settle(w.rt.ctx, checkId, { payments: [] })).rejects.toBeInstanceOf(T.PermissionError);
     await expect(T.applyDiscount(w.rt.ctx, { checkId, kind: "percent", value: 100, reasonCodeId: "rc-disc-regular" })).rejects.toBeDefined();
