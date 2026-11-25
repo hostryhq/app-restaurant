@@ -39,6 +39,8 @@ export type Ui = World & {
   /** A key press (keyboard-only budgets count key groups, not individual characters). */
   keys: () => number;
   press(key: string, init?: KeyboardEventInit): void;
+  /** Type an item code in the counter code box and press Enter: one key group (AC 92). */
+  enter(code: string): Promise<void>;
   pin(digits: string, scope?: string): Promise<void>;
   login(name: "Asha" | "Ravi" | "Meena" | "Anand"): Promise<void>;
 };
@@ -46,8 +48,8 @@ export type Ui = World & {
 const IDS = { Asha: "m-asha", Ravi: "m-ravi", Meena: "m-meena", Anand: "m-anand" } as const;
 const PINS = { Asha: "1111", Ravi: "2222", Meena: "3333", Anand: "4444" } as const;
 
-export async function mountApp(o: RuntimeOptions & { signedIn?: keyof typeof IDS } = {}): Promise<Ui> {
-  const w = await world(o);
+export async function mountApp(o: RuntimeOptions & { signedIn?: keyof typeof IDS; world?: World } = {}): Promise<Ui> {
+  const w = o.world ?? (await world(o));
   let taps = 0;
   let keys = 0;
   const translator = createAppTranslator();
@@ -66,6 +68,16 @@ export async function mountApp(o: RuntimeOptions & { signedIn?: keyof typeof IDS
       const el = await find(id);
       taps++;
       fireEvent.click(el);
+      flush();
+      await until(() => true);
+    },
+    async enter(code) {
+      const input = (await find("code-input")) as HTMLInputElement;
+      keys++;
+      input.value = code;
+      fireEvent.input(input);
+      flush();
+      fireEvent.keyDown(input, { key: "Enter" });
       flush();
       await until(() => true);
     },
@@ -89,4 +101,11 @@ export async function mountApp(o: RuntimeOptions & { signedIn?: keyof typeof IDS
   };
   if (o.signedIn) await ui.login(o.signedIn);
   return ui;
+}
+
+/** Interactive elements without a data-testid (AC 190). */
+export function missingTestIds(root: ParentNode = document): string[] {
+  return Array.from(root.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href]"))
+    .filter((el) => !el.dataset.testid && !el.closest("[data-testid-exempt]"))
+    .map((el) => `${el.tagName.toLowerCase()}${el.className ? `.${String(el.className).split(" ")[0]}` : ""}:${(el.textContent ?? "").trim().slice(0, 20)}`);
 }

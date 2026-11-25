@@ -19,6 +19,7 @@ export const ENTITIES = [
   "order",
   "order_line",
   "order_line_cancel",
+  "order_line_modifier",
   "kot",
   "kot_line",
   "kot_handover",

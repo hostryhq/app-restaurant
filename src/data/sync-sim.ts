@@ -17,13 +17,23 @@ export class SyncSim implements SyncPort {
   private view: SyncView = SyncSim.view(0, 0, false, "none", false);
   private listeners = new Set<(s: SyncView) => void>();
   private running = false;
+  private syncing = false;
 
   constructor(
     private readonly data: AppData,
     private readonly writer: LocalWriter,
     private readonly now: () => number = Date.now,
   ) {
-    data.subscribe(() => this.recount());
+    data.subscribe(() => {
+      this.recount();
+      // Like the runner: while an upstream is reachable, new local ops go up without being asked.
+      if ((this.hubUp || this.cloudUp) && this.view.pendingOps + (this.cloudUp ? this.view.atHubOps : 0) > 0 && !this.syncing) {
+        this.syncing = true;
+        void this.syncNow().finally(() => {
+          this.syncing = false;
+        });
+      }
+    });
   }
 
   private static view(pending: number, atHub: number, online: boolean, upstream: SyncView["upstream"], clockWrong: boolean, lastSyncAt?: string): SyncView {
