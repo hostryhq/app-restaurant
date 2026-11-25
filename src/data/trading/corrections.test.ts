@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OUTLET_STREAM } from "../../runtime";
-import { Net, rows, world, type World } from "../../test/world";
+import { Net, OUTLET_STREAM, rows, world, type World } from "../../test/world";
 import type { Bill, Check, OrderLine } from "./test-types";
 import * as T from "./index";
 
@@ -8,7 +7,7 @@ const list = (w: World) => (e: string) => w.rt.data.snapshot().list(e);
 const sale = async (w: World, item: string, qty: number, tender: "cash" | "card" | "upi" | "none"): Promise<{ billId: string; number: string; checkId: string; total: number }> => {
   const checkId = await T.newCounterCheck(w.rt.ctx);
   await T.addLine(w.rt.ctx, checkId, { itemId: item, qtyMilli: qty });
-  const total = T.previewCheck(list(w), "outlet-1", checkId, w.clock.now())!.c.result.total_paise;
+  const total = T.previewCheck(list(w), w.rt.ctx.outletId, checkId, w.clock.now())!.c.result.total_paise;
   const r = await T.settle(w.rt.ctx, checkId, { payments: tender === "none" ? [] : [{ tender, amount_paise: total }] });
   return { ...r, checkId, total };
 };

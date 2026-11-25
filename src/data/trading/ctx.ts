@@ -15,6 +15,8 @@ export type TradingCtx = {
   outletId: string;
   /** Series/device prefix on KOT numbers and Z-reports ("A07"). */
   deviceCode: string;
+  /** Paper bill-book series codes registered for this outlet, entry-only (from the offline pack `manual_books`, never from a constant). */
+  manualBookCodes: string[];
   /** Member display name for printed documents. */
   nameOf: (memberId: string) => string;
 };

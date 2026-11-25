@@ -33,7 +33,7 @@ describe("order entry, KOT and settle", () => {
     await expect(T.settle(w.rt.ctx, checkId, { payments: [] })).rejects.toBeInstanceOf(PermissionError);
 
     await w.signIn("Asha");
-    const p = T.previewCheck((e) => w.rt.data.snapshot().list(e), "outlet-1", checkId, w.clock.now())!;
+    const p = T.previewCheck((e) => w.rt.data.snapshot().list(e), w.rt.ctx.outletId, checkId, w.clock.now())!;
     const total = p.c.result.total_paise;
     expect(total).toBe(15800); // 15000 + 5% GST (demo rate) = 157.50, rounded to the rupee
     await expect(T.settle(w.rt.ctx, checkId, { payments: [{ tender: "cash", amount_paise: total }] })).rejects.toMatchObject({ code: "no_open_shift" });
@@ -79,7 +79,7 @@ describe("discounts, credit notes, re-bill", () => {
     if (!ap.ok) return;
     await T.applyDiscount(w.rt.ctx, { checkId: c, kind: "percent", value: 2000, reasonCodeId: "rc-disc-regular", approvalId: ap.approvalId });
     await T.startShift(w.rt.ctx, 0);
-    const p = T.previewCheck((e) => w.rt.data.snapshot().list(e), "outlet-1", c, w.clock.now())!;
+    const p = T.previewCheck((e) => w.rt.data.snapshot().list(e), w.rt.ctx.outletId, c, w.clock.now())!;
     const r = await T.settle(w.rt.ctx, c, { payments: [{ tender: "cash", amount_paise: p.c.result.total_paise }] });
     expect(rows<Bill>(w.rt, "bill").find((b) => b.id === r.billId)?.discount_paise).toBe(3000);
   });
@@ -101,7 +101,7 @@ describe("discounts, credit notes, re-bill", () => {
     await T.startShift(w.rt.ctx, 0);
     const c = await T.newCounterCheck(w.rt.ctx);
     await T.addLine(w.rt.ctx, c, { itemId: "it-dosa", qtyMilli: 2000 });
-    const total = T.previewCheck((e) => w.rt.data.snapshot().list(e), "outlet-1", c, w.clock.now())!.c.result.total_paise;
+    const total = T.previewCheck((e) => w.rt.data.snapshot().list(e), w.rt.ctx.outletId, c, w.clock.now())!.c.result.total_paise;
     const r = await T.settle(w.rt.ctx, c, { payments: [{ tender: "cash", amount_paise: total }] });
 
     const ops = rows<{ id: string }>(w.rt, "_op").length;
@@ -230,7 +230,7 @@ describe("shift and day close", () => {
     const c = await T.newCounterCheck(w.rt.ctx);
     await T.addLine(w.rt.ctx, c, { itemId: "it-meal", qtyMilli: 1000 });
     await expect(T.closeDay(w.rt.ctx)).rejects.toMatchObject({ code: "day_blocked" });
-    const total = T.previewCheck((e) => w.rt.data.snapshot().list(e), "outlet-1", c, w.clock.now())!.c.result.total_paise;
+    const total = T.previewCheck((e) => w.rt.data.snapshot().list(e), w.rt.ctx.outletId, c, w.clock.now())!.c.result.total_paise;
     await T.settle(w.rt.ctx, c, { payments: [{ tender: "cash", amount_paise: total }] });
     await expect(T.closeDay(w.rt.ctx)).rejects.toMatchObject({ code: "day_blocked" }); // shift still open
     const expected = 100000 + total;

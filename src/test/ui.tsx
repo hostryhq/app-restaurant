@@ -3,8 +3,8 @@ import { flush } from "solid-js";
 import { expect } from "vitest";
 import { App } from "../features/App";
 import { createAppTranslator } from "../i18n";
-import { deviceSession, type RuntimeOptions } from "../runtime";
-import { world, type World } from "./world";
+import { deviceSession } from "../runtime";
+import { world, type World, type WorldOptions } from "./world";
 
 export const byId = (id: string): HTMLElement => {
   const el = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -48,7 +48,7 @@ export type Ui = World & {
 const IDS = { Asha: "m-asha", Ravi: "m-ravi", Meena: "m-meena", Anand: "m-anand" } as const;
 const PINS = { Asha: "1111", Ravi: "2222", Meena: "3333", Anand: "4444" } as const;
 
-export async function mountApp(o: RuntimeOptions & { signedIn?: keyof typeof IDS; world?: World } = {}): Promise<Ui> {
+export async function mountApp(o: WorldOptions & { signedIn?: keyof typeof IDS; world?: World } = {}): Promise<Ui> {
   const w = o.world ?? (await world(o));
   let taps = 0;
   let keys = 0;
@@ -91,6 +91,11 @@ export async function mountApp(o: RuntimeOptions & { signedIn?: keyof typeof IDS
         fireEvent.click(await find(`${scope}-${d}`));
         flush();
       }
+      // The PIN check makes a proof (async crypto), so the pad stays disabled for a moment: wait until it is idle again or gone.
+      await until(() => {
+        const key = queryById(`${scope}-1`) as HTMLButtonElement | null;
+        if (key?.disabled) throw new Error("pin pad busy");
+      });
     },
     async login(name) {
       await ui.tap(`login-user-${IDS[name]}`);

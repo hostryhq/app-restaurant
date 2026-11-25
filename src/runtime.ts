@@ -9,7 +9,6 @@ import {
   restaurantRegistry,
   type LocalStore,
   type SealVerifier,
-  type SeriesGrant,
   type Session,
   type SessionStore,
   type Signer,
@@ -17,15 +16,14 @@ import {
 } from "@hostry/client-core";
 import { AppData } from "./data/app-data";
 import { monotonicIds } from "./data/ids";
-import { StubIdentity, DEMO_MEMBERS, type StubMember } from "./data/identity-stub";
+import { PackIdentity } from "./data/auth/pack-identity";
+import { outletStreamOf, type DevicePack, type PinProver } from "./data/auth/pack";
 import { OpLog } from "./data/op-log";
 import type { IdentityPort, OpWriter, RecordSpec, SyncPort } from "./data/ports";
-import { seedDemo, TENANT_ID, OUTLET_ID } from "./data/seed";
 import type { TradingCtx } from "./data/trading/ctx";
 import { createFakePrintHub } from "./devices/print-hub";
 import { createShell, type Shell } from "./shell/shell";
 
-export const OUTLET_STREAM = `outlet:${OUTLET_ID}`;
 
 /** Where this device's ops go. The native shell gives real transports (LAN hub URL, cloud gateway); tests give a simulated pair. */
 export type Upstream = {
@@ -62,20 +60,22 @@ export type Runtime = {
   /** Device role from activation: waiter handheld, pos counter or kds (RM-A10). */
   deviceKind: "pos" | "waiter" | "kds";
   deviceId: string;
+  /** The offline pack this runtime was built from: tenant, outlet, device, series and staff all come from it. */
+  pack: DevicePack;
   now: () => number;
 };
 
 export type RuntimeOptions = {
+  /** The device's offline pack (activation). Required: the app has no built-in tenant, outlet, device or series. */
+  pack: DevicePack;
+  /** Checks PINs and makes the session and action proofs (the native shell; a fixture in dev and tests). */
+  prover: PinProver;
   now?: () => number;
-  members?: StubMember[];
-  seed?: boolean;
-  deviceKind?: Runtime["deviceKind"];
-  /** Series code of this device's bills ("A07"). A device that never bills (waiter handheld, KDS) may pass `billing: false`. */
-  deviceCode?: string;
-  billing?: boolean;
-  deviceId?: string;
-  /** Offline pack expiry (RFC 3339 UTC). */
-  packExpiresAt?: string;
+  /**
+   * Dev only: seed the demo menu and settings straight into this device's store (never recorded as an op, never
+   * synced). A real device gets configuration through the configuration intents over sync.
+   */
+  devSeed?: (store: LocalStore) => Promise<void>;
   /** Durable store (IndexedDB in the browser build). Default: client-core's in-memory store. */
   store?: LocalStore;
   signer?: Signer;
@@ -97,25 +97,14 @@ const PROVENANCE: Record<string, { actor?: string; at?: string }> = {
   check_present: { at: "presented_at" },
 };
 
-const DEVICE_KINDS: Record<Runtime["deviceKind"], string> = { pos: "pos", waiter: "waiter", kds: "kds" };
-
-/** Offline-pack series grants of one billing device: its sale series and a credit-note series. */
-export function seriesFor(deviceCode: string): SeriesGrant[] {
-  const credit = `C${deviceCode.slice(1)}`;
-  return [
-    { code: deviceCode, docType: "tax_invoice", state: "active" },
-    { code: deviceCode, docType: "bill_of_supply", state: "active" },
-    { code: deviceCode, docType: "plain_bill", state: "active" },
-    { code: credit, docType: "credit_note", state: "active" },
-  ];
-}
-
-export async function createRuntime(o: RuntimeOptions = {}): Promise<Runtime> {
+export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   const now = o.now ?? Date.now;
-  const deviceKind = o.deviceKind ?? "pos";
-  const deviceCode = o.deviceCode ?? "A07";
-  const deviceId = o.deviceId ?? `dev-${DEVICE_KINDS[deviceKind]}-${deviceCode}`;
-  const store = o.store ?? new InMemoryStore(TENANT_ID);
+  const pack = o.pack;
+  const deviceKind = pack.deviceKind;
+  const deviceCode = pack.deviceCode;
+  const deviceId = pack.deviceId;
+  const outletStream = outletStreamOf(pack);
+  const store = o.store ?? new InMemoryStore(pack.tenantId);
   const newId = monotonicIds(now);
 
   const signer = o.signer ?? (await SoftwareSigner.generate(`k-${deviceId}`));
@@ -125,15 +114,14 @@ export async function createRuntime(o: RuntimeOptions = {}): Promise<Runtime> {
     store,
     schemas: restaurantRegistry(),
     deviceId,
-    outletStream: OUTLET_STREAM,
+    outletStream,
     signer,
     verifier,
-    packVersion: "pack-1",
+    packVersion: pack.packV,
     now,
     newId,
   });
-  if (o.billing !== false && deviceKind !== "kds") await engine.setSeriesGrants(seriesFor(deviceCode));
-  else await engine.setSeriesGrants([]);
+  await engine.setSeriesGrants(pack.series);
 
   let current: Session | undefined;
   const sessionListeners = new Set<(s: Session | undefined) => void>();
@@ -161,7 +149,7 @@ export async function createRuntime(o: RuntimeOptions = {}): Promise<Runtime> {
     onError: () => undefined, // offline is the normal state; the status says so
   });
   const sync = createSyncPort(runner, engine);
-  const engineWriter = new EngineOpWriter(engine, { streams: { brand: OUTLET_STREAM, tenant: OUTLET_STREAM } });
+  const engineWriter = new EngineOpWriter(engine, { streams: { brand: outletStream, tenant: outletStream } });
   const autoSync = o.autoSync ?? false;
   const writer: OpWriter = {
     async record(spec: RecordSpec) {
@@ -191,13 +179,30 @@ export async function createRuntime(o: RuntimeOptions = {}): Promise<Runtime> {
   // Rows from other devices arrive while a sync round runs: reload the snapshot when the engine says something changed.
   engine.onStatus(() => void data.refresh());
 
-  const members = o.members ?? DEMO_MEMBERS;
-  const identity = new StubIdentity({ members, now, deviceId, ...(o.packExpiresAt ? { packExpiresAt: o.packExpiresAt } : {}) });
-  const names = new Map(members.map((m) => [m.memberId, m.displayName]));
+  // Proof-bearing ops (ADR-0005 A2.1, A3.1): `session.open` on every PIN sign-in and `approval.grant` on every approval, each
+  // carrying the opaque proof the shell made while the PIN was in hand. The proof and the integers it binds travel once, on
+  // that op; every later op names the `sid` (or the approval id). Recorded under the member the proof is for.
+  const identity = new PackIdentity({
+    pack,
+    prover: o.prover,
+    now,
+    stamp: () => engine.stampTime(),
+    hooks: {
+      sessionOpened: async (s) => {
+        await writer.record({ intent: "session.open", actor: s.memberId, sid: s.sid, proof: s.proof, pinV: s.pinV, at: s.openedAt, build: () => [] });
+      },
+      approvalGranted: async (a) => {
+        // The grant belongs to the session of the device in use (the requester's), under the approver's name.
+        const sid = current?.sessionId ?? "system";
+        await writer.record({ intent: "approval.grant", actor: a.approverId, sid, approval: a.approvalId, proof: a.proof, pinV: a.pinV, build: () => [] });
+      },
+    },
+  });
+  const names = new Map(pack.members.map((m) => [m.memberId, m.displayName]));
   const fakes = createFakePrintHub(now);
-  if (o.seed !== false) await seedDemo(engine);
+  if (o.devSeed) await o.devSeed(store);
   await data.refresh();
-  const ctx: TradingCtx = { data, session: () => current, now, newId, print: fakes.hub, outletId: OUTLET_ID, deviceCode, nameOf: (id) => names.get(id) ?? id };
+  const ctx: TradingCtx = { data, session: () => current, now, newId, print: fakes.hub, outletId: pack.outletId, deviceCode, manualBookCodes: pack.manualBooks, nameOf: (id) => names.get(id) ?? id };
 
   const links = o.upstream?.links;
   return {
@@ -229,6 +234,7 @@ export async function createRuntime(o: RuntimeOptions = {}): Promise<Runtime> {
     session: () => current,
     deviceKind,
     deviceId,
+    pack,
     now,
   };
 }
@@ -236,12 +242,12 @@ export async function createRuntime(o: RuntimeOptions = {}): Promise<Runtime> {
 /** Device session of a KDS screen: no member, no PIN, only the kitchen's permissions (AC 191). */
 export function deviceSession(rt: Runtime): Session {
   return {
-    tenantId: TENANT_ID,
-    memberId: "device-kds",
-    deviceId: "dev-kds",
+    tenantId: rt.pack.tenantId,
+    memberId: `device:${rt.pack.deviceId}`,
+    deviceId: rt.pack.deviceId,
     sessionId: "s-device",
     kind: "shared",
-    grants: [{ outlets: [OUTLET_ID], perms: ["kds.bump", "menu.availability.set"] }],
+    grants: [{ outlets: [rt.pack.outletId], perms: ["kds.bump", "menu.availability.set"] }],
     expiresAt: new Date(rt.now() + 365 * 86_400_000).toISOString(),
     offline: true,
   };

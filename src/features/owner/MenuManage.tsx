@@ -3,7 +3,6 @@ import type { JSX } from "@solidjs/web";
 import { itemOutletId } from "@hostry/client-core";
 import { CheckRow, Input } from "@hostry/ui-kit";
 import type { Item } from "../../domain/rows";
-import { OUTLET_ID } from "../../data/seed";
 import { setAvailability } from "../../data/trading";
 import { useApp } from "../app-state";
 import { BackButton } from "../common";
@@ -19,7 +18,7 @@ export function MenuManage(): JSX.Element {
       .list<Item>("item")
       .filter((i) => !text || i.name_en.toLowerCase().includes(text) || (i.code ?? "") === text)
       .sort((a, b) => a.sort_order - b.sort_order)
-      .map((i) => ({ item: i, available: snap.get<{ available?: boolean }>("item_outlet", itemOutletId(OUTLET_ID, i.id))?.available !== false }));
+      .map((i) => ({ item: i, available: snap.get<{ available?: boolean }>("item_outlet", itemOutletId(app.rt.pack.outletId, i.id))?.available !== false }));
   });
   return (
     <section data-testid="menu-screen">

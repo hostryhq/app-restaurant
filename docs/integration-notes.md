@@ -41,9 +41,12 @@ ADR items still open from client-core's notes: op envelope with several document
 - **Discount approval check** reads the snapshot before the write (inside the engine's transaction the op log is not a table).
 - `billing_settings.manual_book_codes` is still not an entity field; the seed carries it so book entry works. Tenancy registrations will carry it.
 
-## Identity and approvals (stub)
+## Device configuration, seeding and proofs (Phase 2 soak fixes)
 
-`StubIdentity` implements `IdentityPort`: tap-your-name PIN sign-in from an offline pack, 5-wrong delay and 10-wrong lock (`src/domain/pin-guard.ts`), own-PIN action proof, manager approval on the same device with an approval id (valid two minutes, approver differs from requester). `IdentityPort` extends client-core's `PinLogin` (`members`, `signOut`; `Member` extends `MemberSummary`) and `asPinLogin()` gives the throwing `signIn` that interface has; `Runtime.sessions` is a client-core `SessionStore`. Role to permission templates in `identity-stub.ts` are assumptions for ADR-0005 role templates and the security review. Demo PINs are fixtures (1111, 2222, 3333, 4444), not secrets. The action `proof` is not stamped on ops yet.
+- **Pack, not constants.** Tenant, brand, outlet, device id and kind, series (with `seriesId`), pack version, staff (permissions, `pinV`) and `manualBooks` come from `DevicePack` (`src/data/auth/pack.ts`), read through `Shell.loadPack()`. The demo outlet exists only in `src/fixtures/` (dev server or `VITE_HOSTRY_DEMO=1`, lazy chunk); a production build with no pack says so and stops. `Shell.pinProver` (Argon2id verifier and proof key) is the native shell's job; none exists in a browser.
+- **Seeding.** The `seed.demo` op is gone. Dev seeding puts the demo rows straight into the local store (`seedDemoLocal`), records no op and never syncs; every dev device seeds itself. A real device gets menu and settings through the configuration intents.
+- **Proofs.** `PackIdentity` records `session.open` (proof, `pinV`, `at` = `engine.stampTime()`) on each PIN sign-in and `approval.grant` (approver's action proof, `pinV`) on each approval; no other op carries a proof. `confirmOwnPin` (own-action proof) still only checks the PIN: the own-approval record is not wired. The fixture prover is an HMAC stand-in, not Argon2id.
+- **KDS** device sessions act as `device:<device id>`. Manual-book codes come from the pack, not `billing_settings`.
 
 ## ui-kit
 
@@ -62,4 +65,4 @@ ADR items still open from client-core's notes: op envelope with several document
 Every UI action records one intent from `api-specs sync/intents` through `data.write` (`src/data/trading/*`). Used: `seating.open`, `check.create`, `order.create`, `order.line.add`, `order.line.edit`, `order.line.void`, `order.line.cancel`, `order.items.move`, `order.table.move`, `order.table.merge`, `bill.new`, `bill.split`, `bill.merge`, `bill.cancel`, `bill.request`, `bill.present`, `bill.discount.apply`, `bill.discount.over_limit`, `bill.line.comp`, `bill.service_charge.remove`, `bill.customer_details.edit`, `kot.send`, `kds.status`, `kds.recall`, `kot.handover`, `kot.reprint`, `kot.print.ack`, `seating.close`, `bill.finalize`, `bill.manual_entry`, `bill.reprint`, `payment.record`, `payment.refund`, `creditnote.issue`, `bill.rebill`, `drawer.cash_move`, `shift.open`, `shift.close`, `shift.close.any`, `day.open`, `day.close`, `menu.availability.set`. Read, not written: `business_day_revision` (cloud intent `day.revision.record`).
 Not built: `bill.present.change` (reason chip after a Present), `drawer.open_no_sale`, `check.close_internal`, `menu.open_item`, `order.line.cancel.grace`, `bill.line.comp.allowance`, `series.activate`, `device.clock.confirm`, `session.open`, `approval.grant`, and every online-only action.
 
-The demo rule set (`src/data/seed.ts`) is a fixture, not tax advice; rates in production come only from the published rule set.
+The demo rule set (`src/fixtures/demo-outlet.ts`) is a fixture, not tax advice; rates in production come only from the published rule set.

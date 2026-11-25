@@ -19,7 +19,7 @@ export function Late(): JSX.Element {
   const [date, setDate] = createSignal(new Date(app.nowMs() + 330 * 60_000).toISOString().slice(0, 10));
   const [total, setTotal] = createSignal(0);
   const [qty, setQty] = createSignal<Record<string, number>>({});
-  const books = createMemo(() => ((app.snap().list("billing_settings")[0]?.manual_book_codes as string[] | undefined) ?? []).length > 0);
+  const books = createMemo(() => app.rt.pack.manualBooks.length > 0);
   const items = createMemo(() => app.snap().list<Item>("item").slice(0, 12));
 
   const save = () => {

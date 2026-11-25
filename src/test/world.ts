@@ -1,8 +1,10 @@
 import { KeyRing, SoftwareSigner } from "@hostry/client-core";
 import { FakeNode } from "@hostry/client-core/testing";
 import { ensureDayOpen } from "../data/trading/orders";
-import { OUTLET_STREAM, createRuntime, type Runtime, type RuntimeOptions } from "../runtime";
-import { TENANT_ID } from "../data/seed";
+import { createRuntime, type Runtime, type RuntimeOptions } from "../runtime";
+import { outletStreamOf } from "../data/auth/pack";
+import { demoPack, type DemoPackOptions } from "../fixtures/demo-pack";
+import { DEMO_OUTLET_ID, DEMO_TENANT_ID, seedDemoLocal } from "../fixtures/demo-outlet";
 
 /** Deterministic clock: 2026-11-24 13:05 IST. */
 export class TestClock {
@@ -15,6 +17,12 @@ export class TestClock {
     this.advance(n * 60_000);
   }
 }
+
+/** The demo outlet's stream: the pack of every test device names this outlet. */
+export const OUTLET_STREAM = outletStreamOf({ outletId: DEMO_OUTLET_ID });
+
+/** Test device options: what the demo pack is built from, plus runtime switches. */
+export type WorldOptions = DemoPackOptions & Pick<RuntimeOptions, "autoSync" | "store" | "signer"> & { seed?: boolean };
 
 export type Name = "Asha" | "Ravi" | "Meena" | "Anand";
 export type World = { rt: Runtime; clock: TestClock; net: Net; signIn(name: Name): Promise<void> };
@@ -39,22 +47,26 @@ export class Net {
     const n = new Net(clock);
     const cloudSigner = await SoftwareSigner.generate("cloud-key");
     await n.ring.addCloudKey("cloud-key", cloudSigner.publicB64);
-    const common = { tenantId: TENANT_ID, streams: [OUTLET_STREAM], verifier: n.ring, now: clock.now };
+    const common = { tenantId: DEMO_TENANT_ID, streams: [OUTLET_STREAM], verifier: n.ring, now: clock.now };
     n.cloud = new FakeNode({ role: "cloud", nodeId: "cloud", cloudSigner, ...common });
     n.hub = new FakeNode({ role: "hub", nodeId: "hub-1", ...common });
     return n;
   }
 
   /** A device on this network. The first device (the counter, in most tests) opens the business day; the others receive it by sync. */
-  async add(o: RuntimeOptions & { openDay?: boolean } = {}): Promise<World> {
+  async add(o: WorldOptions & { openDay?: boolean } = {}): Promise<World> {
     const links = { hub: { up: false }, cloud: { up: false } };
-    const id = o.deviceId ?? `dev-${o.deviceKind ?? "pos"}-${o.deviceCode ?? "A07"}`;
+    const { pack, prover } = demoPack({ now: this.clock.now, ...o });
+    const id = pack.deviceId;
     const rt = await createRuntime({
       now: this.clock.now,
-      // The first device holds the demo configuration (what the cloud would publish); the others receive it by sync.
-      seed: this.worlds.length === 0,
-      ...o,
-      deviceId: id,
+      pack,
+      prover,
+      // Dev seeding is local to each device and never syncs: every test device holds the same demo configuration.
+      ...(o.seed === false ? {} : { devSeed: (s) => seedDemoLocal(s, pack.outletId) }),
+      ...(o.autoSync !== undefined ? { autoSync: o.autoSync } : {}),
+      ...(o.store ? { store: o.store } : {}),
+      ...(o.signer ? { signer: o.signer } : {}),
       upstream: { hub: this.hub.connect(id, links.hub), cloud: this.cloud.connect(id, links.cloud), verifier: this.ring, links },
     });
     if (o.openDay ?? this.worlds.length === 0) {
@@ -121,7 +133,7 @@ export class Net {
 }
 
 /** One counter device on its own network (most tests). */
-export async function world(o: RuntimeOptions = {}): Promise<World> {
+export async function world(o: WorldOptions = {}): Promise<World> {
   const net = await Net.create(new TestClock());
   return net.add(o);
 }

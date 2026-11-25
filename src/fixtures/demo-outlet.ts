@@ -1,17 +1,18 @@
-import { itemOutletId, type Mutation, type Row, type SyncEngine } from "@hostry/client-core";
+import { itemOutletId, type LocalStore, type Row } from "@hostry/client-core";
 
 /**
- * Demo outlet for the browser build and tests: what a device holds after the first sync (menu, tables, stations,
- * settings, a tax rule set). Every figure here is a fixture, not tax or price configuration: in production these rows
- * arrive from catalog, billing and the rule-set publisher (client-core sync). Ids are readable on purpose.
+ * DEV FIXTURE ONLY (browser dev build with ?demo, and tests). Demo outlet: what a device holds after the first sync
+ * (menu, tables, stations, settings, a tax rule set). Every figure here is a fixture, not tax or price configuration:
+ * in production these rows arrive through the published configuration intents (catalog, billing, rule-set publisher)
+ * over sync. Nothing in the app reads these ids: tenant, outlet, device and series come from the device's pack.
  */
 
-export const TENANT_ID = "tenant-1";
-export const OUTLET_ID = "outlet-1";
+export const DEMO_TENANT_ID = "tenant-1";
+export const DEMO_OUTLET_ID = "outlet-1";
 
 type Seeded = Record<string, Row[]>;
 
-const r = (id: string, f: Record<string, unknown>): Row => ({ id, tenant_id: TENANT_ID, ...f });
+const r = (id: string, f: Record<string, unknown>): Row => ({ id, tenant_id: DEMO_TENANT_ID, ...f });
 
 /** Rule rows for the three regimes x two premises x four channels, so any outlet profile resolves. Demo rates only. */
 function ruleRows(): Row[] {
@@ -54,7 +55,7 @@ function ruleRows(): Row[] {
   return rows;
 }
 
-export function demoRows(): Seeded {
+export function demoRows(outletId: string = DEMO_OUTLET_ID): Seeded {
   const items: Array<[string, string, string, string, string, string, number, string?]> = [
     // id, category, name, code, station, veg, price, tax_class
     ["it-dosa", "cat-dosa", "Masala Dosa", "12", "KITCHEN", "veg", 8000],
@@ -106,7 +107,7 @@ export function demoRows(): Seeded {
       r("img-2", { item_id: "it-chicken", group_id: "mg-extra", sort_order: 2 }),
     ],
     price_entry: prices,
-    item_outlet: quick.map((id, n) => r(itemOutletId(OUTLET_ID, id), { item_id: id, available: true, quick_item: true, quick_sort: n + 1 })),
+    item_outlet: quick.map((id, n) => r(itemOutletId(outletId, id), { item_id: id, available: true, quick_item: true, quick_sort: n + 1 })),
     station: [
       r("st-kitchen", { code: "KITCHEN", name: "Kitchen", output: "both", language: "en", printer_id: "prn-kitchen" }),
       r("st-bar", { code: "BAR", name: "Bar", output: "kds", language: "en" }),
@@ -149,8 +150,6 @@ export function demoRows(): Seeded {
         shift_required: true,
         handover_count: false,
         day_cutoff_minutes: 300,
-        // Paper bill-book series typed in after a power cut (not an entity field yet: tenancy registrations will carry it).
-        manual_book_codes: ["MB1"],
       }),
     ],
     outlet_settings: [r("os-1", { cancel_grace_seconds: 0, kot_stale_after_seconds: 900, send_timeout_seconds: 3, kot_fallback_print: "auto", covers_required: false, idle_lock_seconds: 300, soldout_resets_daily: true, kds_amber_minutes: 10, kds_red_minutes: 20 })],
@@ -162,26 +161,15 @@ export function demoRows(): Seeded {
 }
 
 /**
- * Record the demo rows as one op, standing in for the configuration the cloud publishes (menu, floor, settings, rule
- * set). They go through the engine, not into the store directly, so the sync engine owns every row it later merges
- * (last-writer-wins candidates) and other devices on the network receive them like any other op. The op is a demo
- * fixture ("seed.demo", not in the intent registry): a device with a real pack gets this configuration from sync instead.
+ * Local-only dev seeding: puts the demo rows straight into this device's store. No op is recorded, so nothing here ever
+ * syncs (the gateway quarantines any `seed.demo` op; menu, floor and settings reach a real device through the
+ * configuration intents). The engine adopts rows put straight into the store with the lowest stamp, so any real op
+ * outranks them. Every dev device seeds the same rows, so devices on one network agree without a sync.
  */
-export async function seedDemo(engine: SyncEngine, extra: Seeded = {}): Promise<void> {
-  const all = { ...demoRows(), ...extra };
-  await engine.record({
-    intent: "seed.demo",
-    actor: "system",
-    sid: "system",
-    build: () =>
-      Object.entries(all).flatMap(([entity, rows]) =>
-        rows.map((row): Mutation => {
-          const f: Record<string, unknown> = { ...row };
-          delete f.id;
-          delete f.tenant_id;
-          return { e: entity, id: row.id, k: "insert", f };
-        }),
-      ),
+export async function seedDemoLocal(store: LocalStore, outletId: string = DEMO_OUTLET_ID, extra: Seeded = {}): Promise<void> {
+  const all = { ...demoRows(outletId), ...extra };
+  await store.transact((tx) => {
+    for (const [entity, rows] of Object.entries(all)) for (const row of rows) tx.put(entity, { ...row, tenant_id: store.tenantId });
   });
 }
 

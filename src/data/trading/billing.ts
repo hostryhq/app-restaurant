@@ -119,7 +119,7 @@ export async function present(ctx: TradingCtx, checkId: string, mode: "printed" 
   const check = checkOf(list, checkId);
   const lines = liveLines(list, checkId);
   const count = snap.list<CheckPresent>("check_present").filter((p) => p.check_id === checkId).length + 1;
-  const bctx = billingContextFrom(list, ctx.outletId);
+  const bctx = billingContextFrom(list, ctx.outletId, ctx.manualBookCodes);
   const waiter = check.waiter_id ? ctx.nameOf(check.waiter_id) : undefined;
   const r = presentCheck(bctx, toHeader(check) as CheckHeader & { id: string }, lines.map(toBillable), {
     presentCount: count,
@@ -231,7 +231,7 @@ export async function settle(ctx: TradingCtx, checkId: string, o: { payments: Pa
       const list = b.list;
       const check = { ...checkOf(list, checkId), ...(check0.waiter_id ? { waiter_id: check0.waiter_id } : {}) };
       const lines = liveLines(list, checkId);
-      const bctx = billingContextFrom(list, ctx.outletId);
+      const bctx = billingContextFrom(list, ctx.outletId, ctx.manualBookCodes);
       const f = finalizeBill(depsFor(b), bctx, toHeader(check), lines.map(toBillable), { payments: o.payments, discountApproved: approved });
       billId = f.bill.id;
       result = { number: f.bill.number, total: f.bill.total_paise };
@@ -312,7 +312,7 @@ export async function creditNote(ctx: TradingCtx, o: { billId: string; lines?: A
     build: (b) => {
       const original = loadOriginal(b.list, o.billId);
       const prev = previouslyCredited(b.list, o.billId);
-      const cn = issueCreditNote(depsFor(b), billingContextFrom(b.list, ctx.outletId), original, {
+      const cn = issueCreditNote(depsFor(b), billingContextFrom(b.list, ctx.outletId, ctx.manualBookCodes), original, {
         lines: o.lines ?? fullCredit(original, prev),
         reasonCodeId: o.reasonCodeId,
         refundTender: o.refundTender,
@@ -372,7 +372,7 @@ export async function rebillBill(ctx: TradingCtx, o: { billId: string; gstin?: s
     build: (b) => {
       const original = loadOriginal(b.list, o.billId);
       const reps = o.replacements ? o.replacements(original) : [replacementFor(original, { ...(o.gstin ? { customer_gstin: o.gstin.trim().toUpperCase() } : {}), ...(o.customerName ? { customer_name: o.customerName } : {}), ...(original.bill.customer_gstin && !o.gstin ? { customer_gstin: original.bill.customer_gstin } : {}) })];
-      const r = rebill(depsFor(b), billingContextFrom(b.list, ctx.outletId), original, reps, { reasonCodeId: o.reasonCodeId, previousCredited: previouslyCredited(b.list, o.billId) });
+      const r = rebill(depsFor(b), billingContextFrom(b.list, ctx.outletId, ctx.manualBookCodes), original, reps, { reasonCodeId: o.reasonCodeId, previousCredited: previouslyCredited(b.list, o.billId) });
       out = { credit: r.credit.note.number, bills: r.bills.map((x) => x.bill.number) };
       return rebillMutations(r);
     },
@@ -394,7 +394,7 @@ export async function bookEntry(ctx: TradingCtx, input: ManualEntryInput): Promi
   await ctx.data.write({
     intent: "bill.manual_entry",
     build: (b) => {
-      const f = manualBookEntry(depsFor(b), billingContextFrom(b.list, ctx.outletId), input);
+      const f = manualBookEntry(depsFor(b), billingContextFrom(b.list, ctx.outletId, ctx.manualBookCodes), input);
       out = { matchesBook: f.matchesBook, billId: f.bill.id };
       return billMutations(f);
     },

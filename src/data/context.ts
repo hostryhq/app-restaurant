@@ -49,7 +49,7 @@ export function settingsFrom(list: ListFn): OutletSettings {
  * sets held on the device (published by Hostry, synced in); nothing is hard-coded. The regime is the outlet's
  * registration; until the tenancy registration rows sync it is read from `outlet_tax_profile.regime` (default regular).
  */
-export function billingContextFrom(list: ListFn, outletId: string): OutletBillingContext {
+export function billingContextFrom(list: ListFn, outletId: string, manualBookCodes: string[] = []): OutletBillingContext {
   const ruleRows = list("tax_rule");
   const sets = list("tax_rule_set").map((s) => {
     const doc: RuleSetDoc = loadRuleSet({
@@ -77,13 +77,12 @@ export function billingContextFrom(list: ListFn, outletId: string): OutletBillin
     return { id: s.id, doc };
   });
   const profile = (list("outlet_tax_profile")[0] ?? {}) as { regime?: Regime; specified_premises?: boolean };
-  const billing = (list("billing_settings")[0] ?? {}) as { manual_book_codes?: string[] };
   return {
     outletId,
     settings: settingsFrom(list),
     regime: profile.regime ?? "regular",
     specifiedPremises: profile.specified_premises ?? false,
     ruleSets: sets,
-    manualBookCodes: billing.manual_book_codes ?? [],
+    manualBookCodes,
   };
 }

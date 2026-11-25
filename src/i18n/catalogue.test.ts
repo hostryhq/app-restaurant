@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { en as uiEn } from "@hostry/ui-kit";
 import { createAppTranslator, en } from "./index";
-import { demoRows } from "../data/seed";
+import { demoRows } from "../fixtures/demo-outlet";
 
 const sources = import.meta.glob("/src/**/*.{ts,tsx}", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 const files = Object.entries(sources).filter(([path]) => !/\.test\.tsx?$/.test(path) && !path.includes("/test/") && !path.endsWith("/i18n/en.ts"));

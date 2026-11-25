@@ -6,6 +6,8 @@
 export const en: Readonly<Record<string, string>> = {
   "common.back": "Back",
   "common.on": "On",
+  "activation.missing": "This device is not activated yet. Ask a manager for an activation code.",
+  "activation.needs_shell": "PIN sign-in needs the Hostry app for this device.",
   "common.off": "Off",
 
   "mode.label": "Mode",

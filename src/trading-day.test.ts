@@ -3,11 +3,11 @@ import { seriesGaps, type BillRow, type CreditNoteRow, type OpEnvelope } from "@
 import type { OpRow } from "./domain/rows";
 import * as T from "./data/trading";
 import { KITCHEN_PRINTER } from "./data/trading/bill-printer";
-import { deviceSession, OUTLET_STREAM } from "./runtime";
-import { Net, rows, world, type World } from "./test/world";
+import { deviceSession } from "./runtime";
+import { Net, OUTLET_STREAM, rows, world, type World } from "./test/world";
 
 const list = (w: World) => (e: string) => w.rt.data.snapshot().list(e);
-const dueOf = (w: World, checkId: string): number => T.previewCheck(list(w), "outlet-1", checkId, w.clock.now())!.c.result.total_paise;
+const dueOf = (w: World, checkId: string): number => T.previewCheck(list(w), w.rt.ctx.outletId, checkId, w.clock.now())!.c.result.total_paise;
 
 /**
  * The scripted trading day (docs/design flows 1.1 to 1.9) on three devices and client-core's sync simulator: the counter
@@ -163,7 +163,7 @@ describe("trading day: three devices, offline all day, a blackout, then reconnec
     net.cloud.inject({ call: "pull", when: "before" }); // a cut mid-round costs nothing: the next round resumes by version vector
     await net.settle();
     const ws = [counter, captain, kds];
-    const hashes = await Promise.all(ws.map((w) => w.rt.engine.stateHash()));
+    const hashes = await Promise.all(ws.map((w) => w.rt.engine.acceptedStateHash()));
     expect(new Set(hashes).size).toBe(1);
     for (const w of ws) expect(await w.rt.engine.vector()).toEqual(await counter.rt.engine.vector());
     expect(net.cloud.vector()[OUTLET_STREAM]).toEqual(await counter.rt.engine.vector());
