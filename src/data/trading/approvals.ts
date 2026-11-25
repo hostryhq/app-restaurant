@@ -1,5 +1,5 @@
 import type { RefundTender } from "@hostry/client-core";
-import { planCreditNote } from "./billing";
+import { planCreditNote, type RebillPlan } from "./billing";
 import type { TradingCtx } from "./ctx";
 
 /**
@@ -54,6 +54,23 @@ export const refundBinding = (refundId: string, billId: string, paymentId: strin
   reason: reasonCodeId,
   values: { bill_id: billId, payment_id: paymentId, amount_paise: amountPaise },
 });
+
+/**
+ * `bill.rebill.approved` (a re-bill after payment or past the allowance): the approval is the sensitive permission of the credit note
+ * (bill.credit_note.create) and binds the original bill, the rebill group, the value withdrawn (the credit note total) and the
+ * replacement value, so it cannot be cited for another bill or a different replacement. The ids and totals come from the plan the op
+ * then uses. Undefined when the re-bill is within the allowance (plain bill.rebill: a session proof only).
+ */
+export function rebillBinding(billId: string, reasonCodeId: string, plan: RebillPlan): ApprovalBinding | undefined {
+  if (plan.approvalReason === undefined) return undefined;
+  return {
+    permission: "bill.credit_note.create",
+    intent: "bill.rebill.approved",
+    target: `credit_note:${plan.noteId}`,
+    reason: reasonCodeId,
+    values: { bill_id: billId, rebill_group_id: plan.rebillGroupId, total_paise: plan.creditTotalPaise, replacement_total_paise: plan.replacementTotalPaise },
+  };
+}
 
 /** `creditnote.issue` (a credit note, or the credit of credit-and-reopen): the credit note row, with the bill and its total. The total is calculated here exactly as the issue will. */
 export function creditNoteBinding(ctx: TradingCtx, o: { billId: string; lines?: Array<{ bill_line_id: string; qty_milli: number }>; reasonCodeId: string; refundTender: RefundTender }): ApprovalBinding & { noteId: string } {

@@ -46,6 +46,14 @@ Sync status screen shows hub and cloud switches only when a runtime is built wit
 Tests read client-core's sources (a vitest alias and a `tsconfig` path to `../client-core/src`) because the published build leaves out its sync
 simulator. On a Windows-mounted drive vitest can be very slow: copy the three repos to a Linux folder and run there.
 
+## Browser build is a test target (ADR-0002 A3.3)
+
+The build declares what it is (`dist/hostry-build.json`, written by `vite.config.ts`): the default is the **browser** target, which keeps rows in
+unencrypted IndexedDB, claims `store: unprotected` and **refuses a live pack** (`src/shell/target.ts`, checked at boot and in `createRuntime`).
+`HOSTRY_TARGET=native` is for the native shell's bundle (not built yet); `HOSTRY_RELEASE=1` marks a build meant to ship. `pnpm build` ends with
+`scripts/release-lint.mjs`, which fails a browser build that lacks its refusal, any browser build marked release, and a native build that still
+bundles the browser shell or the IndexedDB store. Another device's customer details are kept only when the pack says `store: protected`.
+
 ## Rules this app keeps
 
 Writes go to the local store first and return; nothing waits on the network. Money is integer paise (`formatMoney` for display), times are UTC

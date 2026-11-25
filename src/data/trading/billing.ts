@@ -10,6 +10,7 @@ import {
   manualBookEntry,
   presentCheck,
   rebill,
+  rebillApprovedMutations,
   rebillMutations,
   toBillDoc,
   toCreditNoteDoc,
@@ -38,7 +39,7 @@ import type { Check, CheckPresent, OrderLine, OrderLineCancel, OpRow, Shift } fr
 import { billingContextFrom, settingsFrom } from "../context";
 import { BILL_PRINTER } from "./bill-printer";
 import { checkOf, depsFor, holds, liveLines, need, requireDay, TradingError, isoNow, type ListFn, type TradingCtx } from "./ctx";
-import { checkRebill } from "./allowances";
+import { rebillApprovalReason } from "./allowances";
 import { newCounterCheck, orderIdOf } from "./orders";
 import { sendKot, ackPrinted } from "./kitchen";
 import { tableLabelOf } from "./kitchen";
@@ -394,25 +395,72 @@ export function replacementFor(o: OriginalBill, header: Partial<CheckHeader>): R
   return { header: h, lines };
 }
 
+export type RebillInput = { billId: string; gstin?: string; customerName?: string; reasonCodeId: string; replacements?: (orig: OriginalBill) => Replacement[] };
+
+/**
+ * What a re-bill will do, known before anything is recorded: the ids its approval binds (the rebill group and the credit note
+ * row), the value withdrawn (the credit note total) and the replacement value, and whether the allowance makes it a
+ * `bill.rebill.approved`. The calculation is the one the op repeats; no number is taken here.
+ */
+export type RebillPlan = { rebillGroupId: string; noteId: string; creditTotalPaise: number; replacementTotalPaise: number; approvalReason?: string };
+
+function replacementsOf(o: RebillInput, original: OriginalBill): Replacement[] {
+  if (o.replacements) return o.replacements(original);
+  return [replacementFor(original, { ...(o.gstin ? { customer_gstin: o.gstin.trim().toUpperCase() } : {}), ...(o.customerName ? { customer_name: o.customerName } : {}), ...(original.bill.customer_gstin && !o.gstin ? { customer_gstin: original.bill.customer_gstin } : {}) })];
+}
+
+export function planRebill(ctx: TradingCtx, o: RebillInput): RebillPlan {
+  const list: ListFn = (e) => ctx.data.snapshot().list(e);
+  const original = loadOriginal(list, o.billId);
+  const atMs = ctx.now();
+  let n = 0;
+  const r = rebill(
+    {
+      allocator: { allocate: () => ({ number: "PLAN", seriesCode: "PLAN", financialYear: financialYearOfDate(istDateOf(atMs)), running: 0 }) },
+      newId: () => `plan-${++n}`,
+      nowMs: atMs,
+      businessDays: (list("business_day") as unknown as Array<{ business_date: string; status: "open" | "closed" }>).map((d) => ({ business_date: d.business_date, status: d.status })),
+    },
+    billingContextFrom(list, ctx.outletId, ctx.manualBookCodes),
+    original,
+    replacementsOf(o, original),
+    { reasonCodeId: o.reasonCodeId, previousCredited: previouslyCredited(list, o.billId) },
+  );
+  const replacementTotalPaise = r.bills.reduce((s, x) => s + x.bill.total_paise, 0);
+  const approvalReason = rebillApprovalReason(list, openShift(list), original.bill, paidOf(list, o.billId), replacementTotalPaise);
+  return { rebillGroupId: ctx.newId(), noteId: ctx.newId(), creditTotalPaise: r.credit.note.total_paise, replacementTotalPaise, ...(approvalReason !== undefined ? { approvalReason } : {}) };
+}
+
 /**
  * Re-bill (RS19): a full credit note and the replacement bill(s) in one op, so no device sees half of it. The common case
  * is adding a GSTIN after the invoice was issued. Needs `bill.rebill` or a manager's approval.
  */
-export async function rebillBill(ctx: TradingCtx, o: { billId: string; gstin?: string; customerName?: string; reasonCodeId: string; approvalId?: string; replacements?: (orig: OriginalBill) => Replacement[] }): Promise<{ credit: string; bills: string[] }> {
-  need(ctx, "bill.rebill", o.approvalId);
+export async function rebillBill(ctx: TradingCtx, o: RebillInput & { approvalId?: string; plan?: RebillPlan }): Promise<{ credit: string; bills: string[] }> {
   if (o.gstin && !validGstin(o.gstin)) throw new TradingError("bad_gstin");
+  // Within the member's allowance the op is `bill.rebill` (permission bill.rebill). After payment or past the allowance it is
+  // `bill.rebill.approved`: a manager's approval for bill.credit_note.create that binds the original bill, the group, the value
+  // withdrawn and the replacement value, or a session that holds bill.credit_note.create itself (ruling 8, P2-H2).
+  const plan = o.plan ?? planRebill(ctx, o);
+  const approved = plan.approvalReason !== undefined;
+  if (approved && !o.approvalId && ctx.session() && !holds(ctx, "bill.credit_note.create")) throw new TradingError("approval_needed", plan.approvalReason);
+  need(ctx, approved ? "bill.credit_note.create" : "bill.rebill", approved ? o.approvalId : undefined);
+  // The ids the approval named are the ones the op uses: the group id first, then the credit note row (the approval's target).
+  const ids = [plan.rebillGroupId, plan.noteId];
   let out!: { credit: string; bills: string[] };
   await ctx.data.write({
-    intent: "bill.rebill",
-    ...(o.approvalId ? { approval: o.approvalId } : {}),
+    intent: approved ? "bill.rebill.approved" : "bill.rebill",
+    ...(approved && o.approvalId && !holds(ctx, "bill.credit_note.create") ? { approval: o.approvalId } : {}),
     build: (b) => {
       const original = loadOriginal(b.list, o.billId);
-      const reps = o.replacements ? o.replacements(original) : [replacementFor(original, { ...(o.gstin ? { customer_gstin: o.gstin.trim().toUpperCase() } : {}), ...(o.customerName ? { customer_name: o.customerName } : {}), ...(original.bill.customer_gstin && !o.gstin ? { customer_gstin: original.bill.customer_gstin } : {}) })];
-      const r = rebill(depsFor(b), billingContextFrom(b.list, ctx.outletId, ctx.manualBookCodes), original, reps, { reasonCodeId: o.reasonCodeId, previousCredited: previouslyCredited(b.list, o.billId) });
-      // Ruling 8 (P2-H2): after payment, past the shift count, or beyond the discount/comp limits, a manager must clear it.
-      checkRebill(ctx, (e) => (e === "_op" || e === "shift" ? ctx.data.snapshot().list(e) : b.list(e)), openShift((e) => ctx.data.snapshot().list(e)), original.bill, paidOf(b.list, o.billId), r.bills.reduce((s, x) => s + x.bill.total_paise, 0), o.approvalId);
+      const deps = depsFor(b);
+      const r = rebill({ ...deps, newId: () => ids.shift() ?? b.newId() }, billingContextFrom(b.list, ctx.outletId, ctx.manualBookCodes), original, replacementsOf(o, original), { reasonCodeId: o.reasonCodeId, previousCredited: previouslyCredited(b.list, o.billId) });
+      const replacementTotal = r.bills.reduce((s, x) => s + x.bill.total_paise, 0);
+      // What the approval bound must be what is recorded; and the class of the op must still be the one the allowance gives.
+      if (r.credit.note.total_paise !== plan.creditTotalPaise || replacementTotal !== plan.replacementTotalPaise) throw new TradingError("refused", "the re-bill changed since it was planned");
+      const why = rebillApprovalReason((e) => (e === "_op" || e === "shift" ? ctx.data.snapshot().list(e) : b.list(e)), openShift((e) => ctx.data.snapshot().list(e)), original.bill, paidOf(b.list, o.billId), replacementTotal);
+      if (why !== undefined && !approved) throw new TradingError("approval_needed", why);
       out = { credit: r.credit.note.number, bills: r.bills.map((x) => x.bill.number) };
-      return rebillMutations(r);
+      return approved ? rebillApprovedMutations(r) : rebillMutations(r);
     },
   });
   const list: ListFn = (e) => ctx.data.snapshot().list(e);

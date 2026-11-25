@@ -64,12 +64,14 @@ export class Net {
       now: this.clock.now,
       pack,
       prover,
+      // A protected pack is a live one: only the native bundle may hold it (the browser build refuses it).
+      target: pack.store === "protected" ? "native" : "browser",
       // Dev seeding is local to each device and never syncs: every test device holds the same demo configuration.
       ...(o.seed === false ? {} : { devSeed: (s) => seedDemoLocal(s, pack.outletId) }),
       ...(o.autoSync !== undefined ? { autoSync: o.autoSync } : {}),
       ...(o.store ? { store: o.store } : {}),
       ...(o.signer ? { signer: o.signer } : {}),
-      upstream: { hub: this.hub.connect(id, links.hub), cloud: this.cloud.connect(id, links.cloud), verifier: this.ring, links },
+      upstream: { hub: this.hub.connect(id, links.hub, pack.deviceKind, pack.store), cloud: this.cloud.connect(id, links.cloud, pack.deviceKind, pack.store), verifier: this.ring, links },
     });
     if (o.openDay ?? this.worlds.length === 0) {
       const day = await rt.identity.signIn("m-meena", "3333");

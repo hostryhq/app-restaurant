@@ -19,8 +19,9 @@ const dueOf = (w: World, checkId: string): number => T.previewCheck(list(w), w.r
 describe("trading day: three devices, offline all day, a blackout, then reconnect", () => {
   it("runs the whole day, then converges: same state hash, unique gapless numbers per series, Z equals the bills", async () => {
     const net = await Net.create();
-    const counter = await net.add({ deviceKind: "pos", deviceCode: "A07" });
-    const captain = await net.add({ deviceKind: "waiter", deviceCode: "B3K", billing: false });
+    // Customer details travel between tills and handhelds only where the pack says the store is protected (ADR-0002 A3.5): native devices.
+    const counter = await net.add({ deviceKind: "pos", deviceCode: "A07", storeClaim: "protected" });
+    const captain = await net.add({ deviceKind: "waiter", deviceCode: "B3K", billing: false, storeClaim: "protected" });
     const kds = await net.add({ deviceKind: "kds", deviceCode: "K9K", billing: false });
     const clock = net.clock;
     expect(counter.rt.sync.status()).toMatchObject({ online: false, upstream: "none" });
@@ -84,8 +85,7 @@ describe("trading day: three devices, offline all day, a blackout, then reconnec
     expect(b2.number).toBe("A07/2627/000002");
     await T.reprintBill(c.rt.ctx, b2.billId);
     expect(c.rt.fakes.bill.printed.length).toBeGreaterThanOrEqual(4); // pre-bill, two bills, one duplicate
-
-    // Afternoon counter sales; the manager credits a wrong item and re-bills T1's invoice with the customer's GSTIN (one op, two numbers).
+    // Afternoon counter sales; the manager credits a wrong item and re-bills T1's invoice with the customer's GSTIN (one op, two numbers; T1 was paid, so it is bill.rebill.approved, taken by a manager who holds bill.credit_note.create).
     clock.minutes(120);
     const held = await T.newCounterCheck(c.rt.ctx);
     await T.addLine(c.rt.ctx, held, { itemId: "it-roast", qtyMilli: 1000 });
@@ -98,7 +98,7 @@ describe("trading day: three devices, offline all day, a blackout, then reconnec
     expect(cn.number).toBe("C07/2627/000001");
     const rb = await T.rebillBill(c.rt.ctx, { billId: b1.billId, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-gstin" });
     expect(rb).toEqual({ credit: "C07/2627/000002", bills: ["A07/2627/000004"] });
-    const rebillOp = (await c.rt.engine.opAt({ origin: c.rt.deviceId, stream: OUTLET_STREAM, seq: rows<OpRow>(c.rt, "_op").filter((o) => o.own && o.intent === "bill.rebill")[0]!.seq })) as OpEnvelope;
+    const rebillOp = (await c.rt.engine.opAt({ origin: c.rt.deviceId, stream: OUTLET_STREAM, seq: rows<OpRow>(c.rt, "_op").filter((o) => o.own && o.intent === "bill.rebill.approved")[0]!.seq })) as OpEnvelope;
     expect(rebillOp.docs?.map((d) => d.number)).toEqual(["C07/2627/000002", "A07/2627/000004"]);
     await c.signIn("Asha");
     const heldDue = dueOf(c, held);

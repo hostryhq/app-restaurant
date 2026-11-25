@@ -1,4 +1,4 @@
-import type { SeriesGrant } from "@hostry/client-core";
+import type { SeriesGrant, StoreProtection } from "@hostry/client-core";
 import { parseEntitlements, type EntitlementSnapshot } from "../../domain/entitlements";
 
 /**
@@ -30,6 +30,11 @@ export type DevicePack = {
   deviceKind: DeviceKind;
   /** Key id of this device's own credential (pack `device.kid`): the seals and endorsements it makes name it (ADR-0014 A3.4). */
   kid: string;
+  /**
+   * Where this device keeps its rows (pack `device.store`, ADR-0002 A3.5): `protected` only for the native shell's encrypted
+   * store. Decides whether another device's customer details may be kept here. Absent in the pack counts as `unprotected`.
+   */
+  store: StoreProtection;
   /** Series code of this device's bills ("A07"); absent on a device that never bills. */
   deviceCode: string;
   /** Pack version, a JSON integer >= 1 (ADR-0005 A3.1); every device-origin op carries it. */
@@ -60,6 +65,8 @@ export function packFromJson(raw: unknown): DevicePack {
   if (!p || typeof p !== "object") throw new PackError("not an object");
   for (const k of ["tenantId", "brandId", "outletId", "deviceId", "deviceCode", "expiresAt", "kid"] as const) if (!isStr(p[k])) throw new PackError(`missing ${k}`);
   if (p.deviceKind !== "pos" && p.deviceKind !== "waiter" && p.deviceKind !== "personal" && p.deviceKind !== "kds") throw new PackError("bad deviceKind");
+  if (p.store === undefined) p.store = "unprotected";
+  if (p.store !== "protected" && p.store !== "unprotected") throw new PackError("bad store");
   if (!Number.isInteger(p.packV) || (p.packV as number) < 1) throw new PackError("packV must be an integer >= 1");
   if (!Array.isArray(p.members) || !Array.isArray(p.series)) throw new PackError("members and series are required");
   p.manualBooks = Array.isArray(p.manualBooks) ? p.manualBooks : [];

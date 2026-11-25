@@ -3,7 +3,7 @@ import type { JSX } from "@solidjs/web";
 import type { BillLineRow, RefundTender } from "@hostry/client-core";
 import { AmountField, Button, formatMoney, Input, LineSelectList, ReasonChips, SegmentedControl, toasts } from "@hostry/ui-kit";
 import type { ReasonCode } from "../../domain/rows";
-import { creditAndReopen, creditNote, creditNoteBinding, loadOriginal, paidOf, paymentsOf, previouslyCredited, rebillBill, refundBinding, refundPayment, validGstin } from "../../data/trading";
+import { creditAndReopen, creditNote, creditNoteBinding, loadOriginal, paidOf, paymentsOf, planRebill, previouslyCredited, rebillBill, rebillBinding, type RebillPlan, refundBinding, refundPayment, validGstin } from "../../data/trading";
 import { useApp } from "../app-state";
 import { BackButton } from "../common";
 
@@ -42,11 +42,18 @@ export function Credit(props: { billId: string }): JSX.Element {
     // of the credit note or refund and its total are fixed here and used by the op.
     let noteId: string | undefined;
     let refundId: string | undefined;
+    let rebillPlan: RebillPlan | undefined;
     let ask: Parameters<typeof app.askProof>[0] = { permission: perm, target: props.billId, reason: r, title };
     if (mode() === "credit" || mode() === "reopen") {
       const b = creditNoteBinding(app.rt.ctx, { billId: props.billId, ...(mode() === "credit" && lines ? { lines } : {}), reasonCodeId: r, refundTender: mode() === "credit" ? refund() : "adjusted" });
       noteId = b.noteId;
       ask = { permission: b.permission, intent: b.intent, target: b.target, reason: b.reason, values: b.values, title };
+    } else if (mode() === "rebill") {
+      // After payment or past the allowance the re-bill is bill.rebill.approved: the approval names the bill, the group, the value
+      // withdrawn and the replacement value. Within the allowance it stays a plain session proof for bill.rebill.
+      rebillPlan = planRebill(app.rt.ctx, { billId: props.billId, ...(gstin().trim() ? { gstin: gstin() } : {}), reasonCodeId: r });
+      const b = rebillBinding(props.billId, r, rebillPlan);
+      if (b) ask = { permission: b.permission, intent: b.intent, target: b.target, reason: b.reason, values: b.values, title };
     } else if (mode() === "refund") {
       refundId = app.rt.ctx.newId();
       ask = { ...refundBinding(refundId, props.billId, payment() ?? "", refundPaise(), r), title };
@@ -82,7 +89,7 @@ export function Credit(props: { billId: string }): JSX.Element {
       );
     } else {
       await app.run(
-        () => rebillBill(app.rt.ctx, { billId: props.billId, ...(gstin().trim() ? { gstin: gstin() } : {}), reasonCodeId: r, ...approval }),
+        () => rebillBill(app.rt.ctx, { billId: props.billId, ...(gstin().trim() ? { gstin: gstin() } : {}), reasonCodeId: r, ...(rebillPlan ? { plan: rebillPlan } : {}), ...approval }),
         (n) => {
           toasts.show(app.t("credit.rebilled", { credit: n.credit, bill: n.bills.join(", ") }));
           app.back();

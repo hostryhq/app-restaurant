@@ -27,6 +27,7 @@ import type { IdentityPort, OpWriter, RecordSpec, SyncPort } from "./data/ports"
 import type { TradingCtx } from "./data/trading/ctx";
 import { createFakePrintHub } from "./devices/print-hub";
 import { createShell, type Shell } from "./shell/shell";
+import { assertPackAllowed, type BuildTarget } from "./shell/target";
 
 
 /** Where this device's ops go. The native shell gives real transports (LAN hub URL, cloud gateway); tests give a simulated pair. */
@@ -91,6 +92,8 @@ export type RuntimeOptions = {
   upstream?: Upstream;
   /** Push new ops as soon as an upstream answered (the background timer runs in any case once `sync.start()` is called). */
   autoSync?: boolean;
+  /** What this bundle is; default the build's own. A browser build refuses a pack that is not `store: unprotected` (ADR-0002 A3.3). Tests of the native placement pass `native`. */
+  target?: BuildTarget;
 };
 
 /**
@@ -109,6 +112,7 @@ const PROVENANCE: Record<string, { actor?: string; at?: string }> = {
 export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   const now = o.now ?? Date.now;
   const pack = o.pack;
+  assertPackAllowed(pack, o.target);
   const deviceKind = pack.deviceKind;
   const deviceCode = pack.deviceCode;
   const deviceId = pack.deviceId;
@@ -133,6 +137,8 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
     packVersion: pack.packV,
     // The credential kind decides whether personal data reaches this device: a `kds` never receives it (ADR-0014 A3.1).
     deviceKind: pack.deviceKind,
+    // Another device's customer details are kept only when the pack says this store is protected (ADR-0002 A3.5 item 2).
+    storeClaim: pack.store,
     now,
     newId,
   });

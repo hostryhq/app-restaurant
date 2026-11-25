@@ -86,6 +86,8 @@ export type DemoPackOptions = {
   /** Entitlement snapshot of the pack; `null` leaves it out (a device that never received one). */
   entitlements?: EntitlementSnapshot | null;
   deviceKind?: DeviceKind;
+  /** Default `unprotected`: the demo runs in a browser, which can never hold a live pack. */
+  storeClaim?: DevicePack["store"];
   deviceCode?: string;
   deviceId?: string;
   billing?: boolean;
@@ -109,6 +111,7 @@ export function demoPack(o: DemoPackOptions = {}): { pack: DevicePack; prover: D
     outletId: o.outletId ?? DEMO_OUTLET_ID,
     deviceId: o.deviceId ?? `dev-${deviceKind}-${deviceCode}`,
     deviceKind,
+    store: o.storeClaim ?? "unprotected",
     kid: `k-${o.deviceId ?? `dev-${deviceKind}-${deviceCode}`}`,
     deviceCode,
     packV: o.packV ?? 1,

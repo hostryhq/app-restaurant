@@ -42,7 +42,7 @@ export function compedValue(list: ListFn, ops: OpRow[]): number {
 
 /** What the shift has already taken off sales by comp or value-reducing re-bill: usage of the one shared limit. */
 export function reductionUsed(list: ListFn, ops: OpRow[]): number {
-  return compedValue(list, ops) + ops.filter((o) => o.intent === "bill.rebill").reduce((s, o) => s + rebillReduction(list, o), 0);
+  return compedValue(list, ops) + ops.filter((o) => o.intent === "bill.rebill" || o.intent === "bill.rebill.approved").reduce((s, o) => s + rebillReduction(list, o), 0);
 }
 
 /**
@@ -52,15 +52,26 @@ export function reductionUsed(list: ListFn, ops: OpRow[]): number {
  */
 export function checkRebill(ctx: TradingCtx, list: ListFn, shift: Shift | undefined, bill: Pick<BillRow, "total_paise">, paidPaise: number, replacementTotal: number, approvalId?: string): void {
   if (managerCleared(ctx, approvalId)) return;
+  const why = rebillApprovalReason(list, shift, bill, paidPaise, replacementTotal);
+  if (why) throw new TradingError("approval_needed", why);
+}
+
+/**
+ * Why this re-bill is `bill.rebill.approved` rather than `bill.rebill`, or undefined when it is within the member's allowance
+ * (api-specs sync/intents/billing.yaml): any payment on the bill; the shift's re-bill count reached; or a value reduction past
+ * the larger of the comp allowance and the discount limit, counting what comps and earlier re-bills already took.
+ */
+export function rebillApprovalReason(list: ListFn, shift: Shift | undefined, bill: Pick<BillRow, "total_paise">, paidPaise: number, replacementTotal: number): string | undefined {
   const s = settingsFrom(list);
-  if (paidPaise > 0) throw new TradingError("approval_needed", "bill.rebill after payment");
+  if (paidPaise > 0) return "bill.rebill after payment";
   const ops = shiftOps(list, shift);
-  if (rebillCount(ops) >= s.rebill_allowance_per_shift) throw new TradingError("approval_needed", "bill.rebill shift count");
+  if (rebillCount(ops) >= s.rebill_allowance_per_shift) return "bill.rebill shift count";
   const reduction = Math.max(0, bill.total_paise - replacementTotal);
   if (reduction > 0) {
     const limit = Math.max(s.comp_allowance_paise, Math.floor((bill.total_paise * s.discount_limit_bp) / 10_000));
-    if (reductionUsed(list, ops) + reduction > limit) throw new TradingError("approval_needed", "bill.rebill reduces the bill beyond the discount and comp limits");
+    if (reductionUsed(list, ops) + reduction > limit) return "bill.rebill reduces the bill beyond the discount and comp limits";
   }
+  return undefined;
 }
 
 /** Grace cancel: the line is `new` as the device received it, inside the window, the check not presented, under the member's shift limit. */

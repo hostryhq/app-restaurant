@@ -33,7 +33,7 @@ const memoryStorage = (): Shell["storage"] => {
 
 export const PACK_STORAGE_KEY = "hostry.pack";
 
-export function createShell(): Shell {
+function browserShell(): Shell {
   const ls = typeof localStorage !== "undefined" ? localStorage : undefined;
   return {
     kind: "browser",
@@ -46,4 +46,13 @@ export function createShell(): Shell {
     hasNetwork: () => (typeof navigator !== "undefined" ? navigator.onLine : true),
     storage: ls ?? memoryStorage(),
   };
+}
+
+/**
+ * The shell for this bundle. The browser shell exists only in a browser build (its pack storage is `localStorage`); a native build
+ * gets the Tauri shell (ADR-0007), which is not built yet, so a native bundle cannot start here and holds no browser shell code.
+ */
+export function createShell(): Shell {
+  if (__HOSTRY_TARGET__ === "browser") return browserShell();
+  throw new Error("the native shell is not built yet (ADR-0007 C10); only the browser build runs here");
 }

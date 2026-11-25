@@ -7,6 +7,7 @@ import { createAppTranslator } from "./i18n";
 import { InMemoryStore, IndexedDbPersistence, type LocalStore } from "@hostry/client-core";
 import { packFromJson, type DevicePack, type PinProver } from "./data/auth/pack";
 import { createShell } from "./shell/shell";
+import { assertPackAllowed } from "./shell/target";
 import { createRuntime, openDeviceSession } from "./runtime";
 
 // Touch density everywhere (the Windows counter is a desktop layout with touch-size controls). The device kind comes from
@@ -29,12 +30,17 @@ type Boot = { pack: DevicePack; prover: PinProver; devSeed?: (s: LocalStore) => 
 async function boot(): Promise<Boot | undefined> {
   const shell = createShell();
   const stored = shell.loadPack();
-  if (stored !== undefined && shell.pinProver) return { pack: packFromJson(stored), prover: shell.pinProver };
+  if (stored !== undefined && shell.pinProver) {
+    const pack = packFromJson(stored);
+    assertPackAllowed(pack); // a browser build refuses a live pack (ADR-0002 A3.3)
+    return { pack, prover: shell.pinProver };
+  }
   if (!DEMO) return undefined;
   const q = new URLSearchParams(window.location.search).get("device");
   const { demoPack } = await import("./fixtures/demo-pack");
   const { seedDemoLocal } = await import("./fixtures/demo-outlet");
   const { pack, prover } = demoPack({ deviceKind: q === "waiter" || q === "kds" ? q : "pos", ...(q === "waiter" || q === "kds" ? { billing: false, deviceCode: q === "kds" ? "K9K" : "B3K" } : {}) });
+  assertPackAllowed(pack);
   return { pack, prover, devSeed: (s) => seedDemoLocal(s, pack.outletId) };
 }
 
@@ -45,7 +51,8 @@ async function boot(): Promise<Boot | undefined> {
  * the hub and cloud transports.
  */
 async function openStore(pack: DevicePack): Promise<LocalStore> {
-  if (typeof indexedDB === "undefined") return new InMemoryStore(pack.tenantId);
+  // IndexedDB is the browser build's store only; a native bundle holds none of this code (release lint).
+  if (__HOSTRY_TARGET__ !== "browser" || typeof indexedDB === "undefined") return new InMemoryStore(pack.tenantId);
   try {
     return await InMemoryStore.open(pack.tenantId, await IndexedDbPersistence.open(`hostry-restaurant-${pack.tenantId}-${pack.outletId}-${pack.deviceId}`));
   } catch {

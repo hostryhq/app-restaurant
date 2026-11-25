@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build": "vite build && node scripts/check-bundle.mjs",
+    "build": "vite build && node scripts/check-bundle.mjs && node scripts/release-lint.mjs",
+    "release-lint": "node scripts/release-lint.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

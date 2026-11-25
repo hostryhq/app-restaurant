@@ -89,4 +89,40 @@ describe("every approval's action hash is the one the gateway recomputes from th
     const refundId = w.rt.ctx.newId();
     await approvedHashMatchesOp(w, T.refundBinding(refundId, pay.bill_id, pay.id, 500, "rc-cn-wrong"), (approvalId) => T.refundPayment(w.rt.ctx, { paymentId: pay.id, amountPaise: 500, reasonCodeId: "rc-cn-wrong", approvalId, refundId }));
   });
+
+  it("re-bill: within the allowance it is a plain bill.rebill with no approval; after payment it is bill.rebill.approved and the approval binds bill, group, credit total and replacement total", async () => {
+    const w = await world();
+    await w.signIn("Meena");
+    await T.startShift(w.rt.ctx, 0);
+    const sale = async (item: string, paid: boolean) => {
+      const checkId = await T.newCounterCheck(w.rt.ctx);
+      await T.addLine(w.rt.ctx, checkId, { itemId: item, qtyMilli: 1000 });
+      const total = T.previewCheck(list(w), w.rt.ctx.outletId, checkId, w.rt.now())!.c.result.total_paise;
+      return { ...(await T.settle(w.rt.ctx, checkId, { payments: paid ? [{ tender: "cash", amount_paise: total }] : [] })), total };
+    };
+    const unpaid = await sale("it-chai", false);
+    const paid = await sale("it-dosa", true);
+
+    // Unpaid and within the shift's allowance: no approval binding exists, the op is the plain intent.
+    const plain = { billId: unpaid.billId, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-wrong" };
+    expect(T.planRebill(w.rt.ctx, plain).approvalReason).toBeUndefined();
+    expect(T.rebillBinding(plain.billId, plain.reasonCodeId, T.planRebill(w.rt.ctx, plain))).toBeUndefined();
+    await T.rebillBill(w.rt.ctx, plain);
+    expect((await ownOps(w)).filter((o) => o.intent === "bill.rebill")).toHaveLength(1);
+
+    // Paid: a manager's approval, bound to the plan that the op then uses.
+    await w.signIn("Asha");
+    const input = { billId: paid.billId, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-wrong" };
+    const plan = T.planRebill(w.rt.ctx, input);
+    expect(plan.approvalReason).toMatch(/after payment/);
+    expect(plan.creditTotalPaise).toBe(paid.total);
+    const binding = T.rebillBinding(paid.billId, input.reasonCodeId, plan)!;
+    expect(binding).toMatchObject({ permission: "bill.credit_note.create", intent: "bill.rebill.approved", target: `credit_note:${plan.noteId}` });
+    expect(binding.values).toEqual({ bill_id: paid.billId, rebill_group_id: plan.rebillGroupId, total_paise: paid.total, replacement_total_paise: plan.replacementTotalPaise });
+    // Without the approval the cashier cannot do it.
+    await expect(T.rebillBill(w.rt.ctx, { ...input, plan })).rejects.toThrow();
+    await approvedHashMatchesOp(w, binding, (approvalId) => T.rebillBill(w.rt.ctx, { ...input, plan, approvalId }));
+    const credit = rows<{ id: string; rebill_group_id: string }>(w.rt, "credit_note").find((n) => n.id === plan.noteId);
+    expect(credit?.rebill_group_id).toBe(plan.rebillGroupId);
+  });
 });
