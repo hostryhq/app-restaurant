@@ -1,4 +1,5 @@
-// Release lint (ADR-0002 A3.3): fails a build that would accept live packs, or a release build that bundles browser-only pieces.
+// Release lint (ADR-0002 A3.3): fails a browser build that would accept a pack whose `issuer_env` is not `dev`, a browser build marked as a
+// release, or a native build that bundles browser-only pieces. (A native release build enforces `issuer_env: live` at runtime, src/shell/target.ts.)
 // Usage: node scripts/release-lint.mjs   (after `vite build`; `pnpm build` runs it)
 //
 // The build declares itself in dist/hostry-build.json ({ target, release }), written by vite.config.ts.
@@ -9,7 +10,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REFUSAL_MARKER = "hostry:browser-build-refuses-live-packs";
+export const REFUSAL_MARKER = "hostry:browser-build-accepts-only-dev-issuer";
 /** String literals of code that exists only in the browser build (shell pack storage key, IndexedDB database name). */
 export const BROWSER_ONLY_MARKERS = ["hostry.pack", "hostry-restaurant-"];
 
@@ -17,11 +18,11 @@ export const BROWSER_ONLY_MARKERS = ["hostry.pack", "hostry-restaurant-"];
 export function lintRelease({ manifest, js }) {
   const problems = [];
   if (!manifest || (manifest.target !== "browser" && manifest.target !== "native")) {
-    return ["the build does not declare its target (dist/hostry-build.json): it cannot be shown to refuse live packs"];
+    return ["the build does not declare its target (dist/hostry-build.json): it cannot be shown to check the pack's issuer_env"];
   }
   if (manifest.target === "browser") {
-    if (manifest.release) problems.push("a browser build is not a release artifact: it holds an unencrypted store and refuses live packs (ADR-0002 A3.3)");
-    if (!js.includes(REFUSAL_MARKER)) problems.push("the browser build does not carry its live-pack refusal: it would accept live packs");
+    if (manifest.release) problems.push("a browser build is not a release artifact: it holds an unencrypted store and accepts only dev-issued packs (ADR-0002 A3.3)");
+    if (!js.includes(REFUSAL_MARKER)) problems.push("the browser build does not carry its issuer_env check: it would accept packs from a test, ci or live identity");
   } else {
     for (const m of BROWSER_ONLY_MARKERS) {
       if (js.includes(m)) problems.push(`a native build bundles browser-only code (${m}): the browser shell or the IndexedDB store`);

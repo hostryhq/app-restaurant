@@ -1,4 +1,4 @@
-import { approvalProofMessage, sessionProofMessage, type SeriesGrant } from "@hostry/client-core";
+import { approvalProofMessage, sessionProofMessage, type IssuerEnv, type SeriesGrant } from "@hostry/client-core";
 import type { ApprovalProofInput, DeviceKind, DevicePack, PackMember, PinProver, SessionProofInput } from "../data/auth/pack";
 import type { EntitlementSnapshot } from "../domain/entitlements";
 import { DEMO_OUTLET_ID, DEMO_TENANT_ID } from "./demo-outlet";
@@ -93,6 +93,8 @@ export type DemoPackOptions = {
   billing?: boolean;
   manualBooks?: string[];
   members?: DemoMember[];
+  /** The pack's `issuer_env` claim; default `dev`, the only one a browser build accepts. */
+  issuerEnv?: IssuerEnv;
   packV?: number;
   expiresAt?: string;
   tenantId?: string;
@@ -112,6 +114,7 @@ export function demoPack(o: DemoPackOptions = {}): { pack: DevicePack; prover: D
     deviceId: o.deviceId ?? `dev-${deviceKind}-${deviceCode}`,
     deviceKind,
     store: o.storeClaim ?? "unprotected",
+    issuerEnv: o.issuerEnv ?? "dev",
     kid: `k-${o.deviceId ?? `dev-${deviceKind}-${deviceCode}`}`,
     deviceCode,
     packV: o.packV ?? 1,

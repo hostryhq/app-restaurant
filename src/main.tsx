@@ -5,7 +5,7 @@ import "./app.css";
 import { App } from "./features/App";
 import { createAppTranslator } from "./i18n";
 import { InMemoryStore, IndexedDbPersistence, type LocalStore } from "@hostry/client-core";
-import { packFromJson, type DevicePack, type PinProver } from "./data/auth/pack";
+import { loadVerifiedPack, type DevicePack, type PinProver } from "./data/auth/pack";
 import { createShell } from "./shell/shell";
 import { assertPackAllowed } from "./shell/target";
 import { createRuntime, openDeviceSession } from "./runtime";
@@ -31,8 +31,8 @@ async function boot(): Promise<Boot | undefined> {
   const shell = createShell();
   const stored = shell.loadPack();
   if (stored !== undefined && shell.pinProver) {
-    const pack = packFromJson(stored);
-    assertPackAllowed(pack); // a browser build refuses a live pack (ADR-0002 A3.3)
+    const pack = await loadVerifiedPack(stored); // the pack JWS is verified on every load
+    assertPackAllowed(pack); // a browser build accepts only issuer_env dev (ADR-0002 A3.3)
     return { pack, prover: shell.pinProver };
   }
   if (!DEMO) return undefined;

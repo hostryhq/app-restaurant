@@ -6,14 +6,19 @@ import { createRuntime } from "../runtime";
 import { demoPack } from "../fixtures/demo-pack";
 
 describe("browser build refuses live packs (ADR-0002 A3.3)", () => {
-  it("a browser build holds only an unprotected pack; the native bundle takes a protected one", () => {
-    expect(() => assertPackAllowed({ store: "unprotected" }, "browser")).not.toThrow();
-    expect(() => assertPackAllowed({ store: "protected" }, "browser")).toThrow(LivePackRefused);
-    expect(() => assertPackAllowed({ store: "protected" }, "native")).not.toThrow();
+  it("a browser build holds only a pack whose signed issuer_env is dev, whatever its store claim", () => {
+    expect(() => assertPackAllowed({ issuerEnv: "dev" }, "browser", false)).not.toThrow();
+    for (const env of ["test", "ci", "live"] as const) expect(() => assertPackAllowed({ issuerEnv: env }, "browser", false)).toThrow(LivePackRefused);
   });
 
-  it("the runtime refuses a protected pack in a browser build and runs it in a native one", async () => {
-    const { pack, prover } = demoPack({ storeClaim: "protected" });
+  it("a native release build holds only live packs; a native development build takes any issuer", () => {
+    expect(() => assertPackAllowed({ issuerEnv: "live" }, "native", true)).not.toThrow();
+    for (const env of ["dev", "test", "ci"] as const) expect(() => assertPackAllowed({ issuerEnv: env }, "native", true)).toThrow(LivePackRefused);
+    for (const env of ["dev", "test", "ci", "live"] as const) expect(() => assertPackAllowed({ issuerEnv: env }, "native", false)).not.toThrow();
+  });
+
+  it("the runtime refuses a live-issued pack in a browser build and runs it in a native one", async () => {
+    const { pack, prover } = demoPack({ issuerEnv: "live", storeClaim: "protected" });
     await expect(createRuntime({ pack, prover, target: "browser" })).rejects.toBeInstanceOf(LivePackRefused);
     const rt = await createRuntime({ pack, prover, target: "native" });
     expect(rt.engine.storeClaim).toBe("protected");

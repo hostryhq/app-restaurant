@@ -1,4 +1,4 @@
-import type { SeriesGrant, StoreProtection } from "@hostry/client-core";
+import { identityKeysFromPack, verifyPackJws, type IssuerEnv, type SeriesGrant, type StoreProtection } from "@hostry/client-core";
 import { parseEntitlements, type EntitlementSnapshot } from "../../domain/entitlements";
 
 /**
@@ -35,6 +35,13 @@ export type DevicePack = {
    * store. Decides whether another device's customer details may be kept here. Absent in the pack counts as `unprotected`.
    */
   store: StoreProtection;
+  /**
+   * The environment of the identity that signed the pack (pack `issuer_env`, signed with it). Decides which builds may hold it:
+   * a browser build only `dev`, a native release build only `live` (`assertPackAllowed`).
+   */
+  issuerEnv: IssuerEnv;
+  /** The identity keys the pack publishes (kid to X9.62 point), set by `loadVerifiedPack`: the LAN transport verifies the hub's credential with them. */
+  identityKeys?: Record<string, string>;
   /** Series code of this device's bills ("A07"); absent on a device that never bills. */
   deviceCode: string;
   /** Pack version, a JSON integer >= 1 (ADR-0005 A3.1); every device-origin op carries it. */
@@ -65,6 +72,7 @@ export function packFromJson(raw: unknown): DevicePack {
   if (!p || typeof p !== "object") throw new PackError("not an object");
   for (const k of ["tenantId", "brandId", "outletId", "deviceId", "deviceCode", "expiresAt", "kid"] as const) if (!isStr(p[k])) throw new PackError(`missing ${k}`);
   if (p.deviceKind !== "pos" && p.deviceKind !== "waiter" && p.deviceKind !== "personal" && p.deviceKind !== "kds") throw new PackError("bad deviceKind");
+  if (p.issuerEnv !== "dev" && p.issuerEnv !== "test" && p.issuerEnv !== "ci" && p.issuerEnv !== "live") throw new PackError("bad issuerEnv");
   if (p.store === undefined) p.store = "unprotected";
   if (p.store !== "protected" && p.store !== "unprotected") throw new PackError("bad store");
   if (!Number.isInteger(p.packV) || (p.packV as number) < 1) throw new PackError("packV must be an integer >= 1");
@@ -76,6 +84,26 @@ export function packFromJson(raw: unknown): DevicePack {
   for (const g of p.series) if (!isStr(g?.seriesId)) throw new PackError("series without seriesId");
   for (const m of p.members) if (!isStr(m?.memberId) || !Number.isInteger(m.pinV) || m.pinV < 1 || !Array.isArray(m.perms)) throw new PackError("bad member");
   return p as DevicePack;
+}
+
+/**
+ * Loads the pack the shell stored: `{ ...DevicePack view, jws }`. The JWS (ES256, `hostry-pack+jws`) is verified on every load against
+ * the identity keys the device already holds (`trusted`; none at first activation, where the pack's own keys vouch and the shell is the
+ * trust anchor), and the view must agree with the signed claims, so an edited view cannot trade. A pack without a signature is refused.
+ */
+export async function loadVerifiedPack(raw: unknown, opts: { trusted?: Readonly<Record<string, string>> } = {}): Promise<DevicePack> {
+  const pack = packFromJson(raw);
+  const jws = (raw as { jws?: unknown }).jws;
+  if (typeof jws !== "string") throw new PackError("not signed (no jws)");
+  const r = await verifyPackJws(jws, opts);
+  if (!r.ok) throw new PackError(`signature check failed (${r.reason})`);
+  const c = r.claims as { issuer_env?: string; pack_v?: number; organisation_id?: string; device?: { device_id?: string } };
+  if (c.issuer_env !== pack.issuerEnv) throw new PackError("issuerEnv does not match the signed claims");
+  if (c.pack_v !== pack.packV) throw new PackError("packV does not match the signed claims");
+  if (c.organisation_id !== pack.tenantId) throw new PackError("tenantId does not match the signed claims");
+  if (c.device?.device_id !== pack.deviceId) throw new PackError("deviceId does not match the signed claims");
+  pack.identityKeys = identityKeysFromPack(r.claims.identity_public_keys);
+  return pack;
 }
 
 /** The stream of the device's outlet (ADR-0002). */

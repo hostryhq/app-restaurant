@@ -49,7 +49,7 @@ simulator. On a Windows-mounted drive vitest can be very slow: copy the three re
 ## Browser build is a test target (ADR-0002 A3.3)
 
 The build declares what it is (`dist/hostry-build.json`, written by `vite.config.ts`): the default is the **browser** target, which keeps rows in
-unencrypted IndexedDB, claims `store: unprotected` and **refuses a live pack** (`src/shell/target.ts`, checked at boot and in `createRuntime`).
+unencrypted IndexedDB, claims `store: unprotected` and **refuses any pack whose signed `issuer_env` is not `dev`** (a native release build accepts only `live`; the pack JWS is verified on every load) (`src/shell/target.ts`, checked at boot and in `createRuntime`).
 `HOSTRY_TARGET=native` is for the native shell's bundle (not built yet); `HOSTRY_RELEASE=1` marks a build meant to ship. `pnpm build` ends with
 `scripts/release-lint.mjs`, which fails a browser build that lacks its refusal, any browser build marked release, and a native build that still
 bundles the browser shell or the IndexedDB store. Another device's customer details are kept only when the pack says `store: protected`.
