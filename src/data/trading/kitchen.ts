@@ -24,12 +24,13 @@ export function tableLabelOf(list: ListFn, check: Check): string {
 }
 
 /** The printing model of one stored KOT row. Prices never appear on a KOT (client-core toKotDoc). */
-export function kotDocFor(ctx: TradingCtx, list: ListFn, kotId: string, variant: KotDoc["variant"] = "original", extra: Partial<KotDoc> = {}): KotDoc {
+export function kotDocFor(ctx: TradingCtx, list: ListFn, kotId: string, variant: KotDoc["variant"] = "original", extra: Partial<KotDoc> = {}, linesOf?: Array<Pick<KotLine, "order_line_id" | "name" | "qty_milli">>): KotDoc {
   const kot = (list("kot") as Kot[]).find((k) => k.id === kotId);
   if (!kot) throw new TradingError("not_found", `kot ${kotId}`);
   const check = (list("check") as Check[]).find((c) => c.id === kot.check_id);
   const station = ((list("station") as Station[]).find((s) => s.code === kot.station_code) ?? { id: "", code: kot.station_code, name: "Kitchen", output: "both", language: "en" }) as CoreStation;
-  const lines = (list("kot_line") as KotLine[]).filter((l) => l.kot_id === kotId);
+  // A MOVED ticket has no kot_line rows (order.items.move writes the kot only); the mover passes the moved lines to print.
+  const lines = (linesOf ?? (list("kot_line") as KotLine[]).filter((l) => l.kot_id === kotId)) as KotLine[];
   const orderLines = list("order_line") as OrderLine[];
   const sendable: SendableLine[] = lines.map((l) => {
     const ol = orderLines.find((o) => o.id === l.order_line_id);
@@ -64,14 +65,14 @@ export function kotDocFor(ctx: TradingCtx, list: ListFn, kotId: string, variant:
 }
 
 /** Prints a stored KOT on its station's printer, if it has one. Returns false for a KDS-only station. */
-export function printKot(ctx: TradingCtx, list: ListFn, kotId: string, trigger: PrintTrigger = "auto", variant: KotDoc["variant"] = "original", extra: Partial<KotDoc> = {}, jobId = kotId): boolean {
+export function printKot(ctx: TradingCtx, list: ListFn, kotId: string, trigger: PrintTrigger = "auto", variant: KotDoc["variant"] = "original", extra: Partial<KotDoc> = {}, jobId = kotId, linesOf?: Array<Pick<KotLine, "order_line_id" | "name" | "qty_milli">>): boolean {
   const kot = (list("kot") as Kot[]).find((k) => k.id === kotId);
   if (!kot) return false;
   const station = (list("station") as Station[]).find((s) => s.code === kot.station_code);
   if (!station || station.output === "kds") return false;
   const printerId = station.printer_id ?? KITCHEN_PRINTER;
   if (!ctx.print.has(printerId)) return false;
-  ctx.print.print(printerId, kotDocFor(ctx, list, kotId, variant, extra), { jobId, trigger });
+  ctx.print.print(printerId, kotDocFor(ctx, list, kotId, variant, extra, linesOf), { jobId, trigger });
   return true;
 }
 
@@ -116,7 +117,6 @@ export async function sendKot(ctx: TradingCtx, checkId: string): Promise<string[
             table_name: label,
             ...(check.token_no !== undefined ? { token_no: check.token_no } : {}),
             business_date: date,
-            created_at: new Date(b.now).toISOString(),
           },
         });
         for (const l of t.lines) {
@@ -171,7 +171,6 @@ export async function cancelSentLine(ctx: TradingCtx, o: { lineId: string; qtyMi
   if (qty < 1) throw new TradingError("refused", "nothing to cancel");
   const list: ListFn = (e) => snap.list(e);
   const kotLine = snap.list<KotLine>("kot_line").find((k) => k.order_line_id === o.lineId);
-  const original = kotLine ? snap.get<Kot>("kot", kotLine.kot_id) : undefined;
   const status = kotLine?.status ?? "new";
   const check = snap.get<Check>("check", line.check_id);
   const kotId = ctx.newId();
@@ -181,15 +180,14 @@ export async function cancelSentLine(ctx: TradingCtx, o: { lineId: string; qtyMi
     build: (b) => {
       const date = requireDay(list);
       return [
-        { e: "kot", id: kotId, k: "insert", f: { check_id: line.check_id, order_id: line.order_id, station_code: line.station_code, kot_no: `${ctx.deviceCode}-C${String(snap.list("kot").length + 1).padStart(3, "0")}`.slice(0, 12), kind: "cancel", order_type: check?.order_type ?? "dine_in", table_name: check ? tableLabelOf(list, check) : "", business_date: date, created_at: new Date(b.now).toISOString() } },
-        { e: "kot_line", id: b.newId(), k: "insert", f: { kot_id: kotId, order_line_id: line.id, name: line.kitchen_name, qty_milli: qty, status: "new" } },
-        { e: "order_line_cancel", id: b.newId(), k: "insert", f: { order_line_id: line.id, kind: "cancel", qty_milli: qty, reason_code_id: o.reasonCodeId, ...(o.approvalId ? { approval_id: o.approvalId } : {}), kitchen_status_at_cancel: status, wastage: status !== "new", kot_id: original?.id ?? kotId } },
+        { e: "kot", id: kotId, k: "insert", f: { check_id: line.check_id, order_id: line.order_id, station_code: line.station_code, kot_no: `${ctx.deviceCode}-C${String(snap.list("kot").length + 1).padStart(3, "0")}`.slice(0, 12), kind: "cancel", order_type: check?.order_type ?? "dine_in", table_name: check ? tableLabelOf(list, check) : "", business_date: date } },
+        { e: "order_line_cancel", id: b.newId(), k: "insert", f: { order_line_id: line.id, kind: "cancel", qty_milli: qty, reason_code_id: o.reasonCodeId, ...(o.approvalId ? { approval_id: o.approvalId } : {}), kitchen_status_at_cancel: status, wastage: status !== "new", kot_id: kotId } },
       ];
     },
   });
   const fresh: ListFn = (e) => ctx.data.snapshot().list(e);
   const reason = snap.get("reason_code", o.reasonCodeId)?.label_key as string | undefined;
-  printKot(ctx, fresh, kotId, "manual", "cancel", reason ? { reason } : {});
+  printKot(ctx, fresh, kotId, "manual", "cancel", reason ? { reason } : {}, kotId, [{ order_line_id: line.id, name: line.kitchen_name, qty_milli: qty }]);
   await ctx.print.flush();
 }
 
@@ -206,24 +204,26 @@ export async function stepItem(ctx: TradingCtx, kotLineId: string): Promise<void
 /** Bump: every item of the ticket ready, one tap (AC 76). */
 export async function bump(ctx: TradingCtx, kotId: string): Promise<void> {
   need(ctx, "kds.bump");
+  if (ctx.data.snapshot().get<Kot>("kot", kotId)?.kind === "recall") return acknowledge(ctx, kotId);
   const lines = ctx.data.snapshot().list<KotLine>("kot_line").filter((l) => l.kot_id === kotId && l.status !== "ready" && l.status !== "served");
   if (lines.length === 0) return;
   await ctx.data.write({ intent: "kds.status", build: () => lines.map((l): Mutation => ({ e: "kot_line", id: l.id, k: "rank", f: { status: "ready" } })) });
 }
 
-/** Recall a bumped ticket: a new ticket marked RECALL that points at the old one (AC 78). */
+/**
+ * Recall a bumped ticket: a new ticket marked RECALL that points at the old one (AC 78). The contract writes the ticket
+ * row only; the KDS shows the old ticket's items on it, and a bump of the recall ticket is a local acknowledgement.
+ */
 export async function recall(ctx: TradingCtx, kotId: string): Promise<string> {
   need(ctx, "kds.bump");
   const snap = ctx.data.snapshot();
   const k = snap.get<Kot>("kot", kotId);
   if (!k) throw new TradingError("not_found", kotId);
   const id = ctx.newId();
-  const lines = snap.list<KotLine>("kot_line").filter((l) => l.kot_id === kotId);
   await ctx.data.write({
     intent: "kds.recall",
-    build: (b) => [
-      { e: "kot", id, k: "insert", f: { check_id: k.check_id, order_id: k.order_id, station_code: k.station_code, kot_no: k.kot_no, kind: "recall", recall_of_kot_id: kotId, order_type: k.order_type, table_name: k.table_name ?? "", business_date: k.business_date, created_at: new Date(b.now).toISOString() } },
-      ...lines.map((l): Mutation => ({ e: "kot_line", id: b.newId(), k: "insert", f: { kot_id: id, order_line_id: l.order_line_id, name: l.name, qty_milli: l.qty_milli, status: "new" } })),
+    build: () => [
+      { e: "kot", id, k: "insert", f: { check_id: k.check_id, order_id: k.order_id, station_code: k.station_code, kot_no: k.kot_no, kind: "recall", recall_of_kot_id: kotId, order_type: k.order_type, table_name: k.table_name ?? "", business_date: k.business_date } },
     ],
   });
   return id;

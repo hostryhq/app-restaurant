@@ -1,4 +1,4 @@
-import type { Mutation } from "@hostry/client-core";
+import { availabilitySpec, type Mutation } from "@hostry/client-core";
 import { liveQty } from "../../domain/lines";
 import type { Check, OrderLine, OrderLineCancel, Seating } from "../../domain/rows";
 import { need, requireDay, TradingError, type ListFn, type TradingCtx } from "./ctx";
@@ -39,7 +39,7 @@ export async function splitBill(ctx: TradingCtx, fromCheckId: string, sel: Selec
   await ctx.data.write({
     intent: "bill.split",
     build: (b) => {
-      const muts: Mutation[] = [{ e: "check", id: newId, k: "insert", f: { ...(from.seating_id ? { seating_id: from.seating_id } : {}), order_type: from.order_type, ...(from.token_no !== undefined ? { token_no: from.token_no } : {}), label: `Bill ${n}`, business_date: date, status: "open", ...(from.waiter_id ? { waiter_id: from.waiter_id } : {}) } }];
+      const muts: Mutation[] = [{ e: "check", id: newId, k: "insert", f: { ...(from.seating_id ? { seating_id: from.seating_id } : {}), order_type: from.order_type, ...(from.token_no !== undefined ? { token_no: from.token_no } : {}), label: `Bill ${n}`, business_date: date, status: "open" } }];
       for (const p of picks) {
         if (p.whole) muts.push({ e: "order_line", id: p.line.id, k: "set", f: { check_id: newId } });
         else {
@@ -88,14 +88,13 @@ export async function moveItems(ctx: TradingCtx, sel: Selection, target: { check
         }
       }
       if (movedKot) {
-        muts.push({ e: "kot", id: movedKot, k: "insert", f: { check_id: targetCheckId, order_id: toOrder, station_code: sentPicks[0]!.line.station_code, kot_no: `${ctx.deviceCode}-M${String(snap.list("kot").length + 1).padStart(3, "0")}`.slice(0, 12), kind: "moved", order_type: to.order_type, business_date: requireDay(b.list), created_at: new Date(b.now).toISOString() } });
-        for (const p of sentPicks) muts.push({ e: "kot_line", id: b.newId(), k: "insert", f: { kot_id: movedKot, order_line_id: p.line.id, name: p.line.kitchen_name, qty_milli: p.qty, status: "new" } });
+        muts.push({ e: "kot", id: movedKot, k: "insert", f: { check_id: targetCheckId, order_id: toOrder, station_code: sentPicks[0]!.line.station_code, kot_no: `${ctx.deviceCode}-M${String(snap.list("kot").length + 1).padStart(3, "0")}`.slice(0, 12), kind: "moved", order_type: to.order_type, business_date: requireDay(b.list) } });
       }
       return muts;
     },
   });
   if (movedKot) {
-    printKot(ctx, (e) => ctx.data.snapshot().list(e), movedKot, "manual", "moved");
+    printKot(ctx, (e) => ctx.data.snapshot().list(e), movedKot, "manual", "moved", {}, movedKot, sentPicks.map((p) => ({ order_line_id: p.line.id, name: p.line.kitchen_name, qty_milli: p.qty })));
     await ctx.print.flush();
   }
   return targetCheckId;
@@ -158,11 +157,6 @@ export async function cancelCheck(ctx: TradingCtx, checkId: string, reasonCodeId
 /** Sold out / available at this outlet (RS29, menu.availability.set). The kitchen and counter hold the permission. */
 export async function setAvailability(ctx: TradingCtx, itemId: string, available: boolean): Promise<void> {
   need(ctx, "menu.availability.set");
-  const rowId = `io-${itemId}`;
-  const exists = ctx.data.snapshot().get("item_outlet", rowId);
-  await ctx.data.write({
-    intent: "menu.availability.set",
-    build: () => [exists ? { e: "item_outlet", id: rowId, k: "set", f: { available } } : { e: "item_outlet", id: rowId, k: "insert", f: { item_id: itemId, available } }],
-  });
+  await ctx.data.write(availabilitySpec({ outletId: ctx.outletId, itemId, available }));
 }
 

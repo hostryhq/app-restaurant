@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { world, rows, relay } from "../../test/world";
+import { world, rows, Net } from "../../test/world";
 import type { Bill, Check, Kot, KotLine, OrderLine } from "./test-types";
 import * as T from "./index";
 import { PermissionError, TradingError } from "./ctx";
@@ -155,21 +155,30 @@ describe("KDS, cancel, blackout late tickets", () => {
     expect(rows<Kot>(w.rt, "kot").some((k) => k.kind === "cancel")).toBe(true);
   });
 
+  /** A counter (the printing device, with the menu) and a waiter handheld on one LAN hub; the handheld then loses the LAN. */
+  async function counterAndHandheld() {
+    const net = await Net.create();
+    const host = await net.add({ deviceKind: "pos", deviceCode: "A07" });
+    const hand = await net.add({ deviceKind: "waiter", deviceCode: "B3K", billing: false });
+    await net.links({ hub: true }); // morning: the LAN is up, the handheld gets the menu and the open day
+    await net.links({ hub: false }); // then the power and the wifi go
+    return { net, host, hand };
+  }
+
   it("blackout: a handed-over KOT never prints as an original; a recent one prints exactly once", async () => {
-    const hand = await world(); // a battery handheld that traded alone
+    const { net, host, hand } = await counterAndHandheld();
     await hand.signIn("Ravi");
     const { checkId } = await T.openTableCheck(hand.rt.ctx, "tb-3");
     await T.addLine(hand.rt.ctx, checkId, { itemId: "it-bajji", qtyMilli: 1000 });
     const [given] = await T.sendKot(hand.rt.ctx, checkId);
     await T.handover(hand.rt.ctx, given!, "by_hand");
-    hand.clock.minutes(5);
+    net.clock.minutes(5);
     await T.addLine(hand.rt.ctx, checkId, { itemId: "it-plain", qtyMilli: 1000 });
     const [recent] = await T.sendKot(hand.rt.ctx, checkId);
 
-    // power returns: the printing device (counter PC) pulls the handheld's rows a minute after the last KOT
-    const host = await world();
-    host.clock.ms = hand.clock.now() + 60_000;
-    await relay(hand, host);
+    // the LAN returns a minute after the last KOT: the counter pulls the handheld's ops
+    net.clock.minutes(1);
+    await net.links({ hub: true });
     await host.signIn("Asha");
     expect(T.ingestArrivedKot(host.rt.ctx, recent!)).toBe("queued");
     expect(T.ingestArrivedKot(host.rt.ctx, recent!)).toBe("already_handled"); // exactly once
@@ -178,14 +187,13 @@ describe("KDS, cancel, blackout late tickets", () => {
   });
 
   it("a KOT older than the stale window is held for a person; printing it marks it late, dismissing it is final", async () => {
-    const hand = await world();
+    const { net, host, hand } = await counterAndHandheld();
     await hand.signIn("Ravi");
     const { checkId } = await T.openTableCheck(hand.rt.ctx, "tb-4");
     await T.addLine(hand.rt.ctx, checkId, { itemId: "it-vada", qtyMilli: 1000 });
     const [k] = await T.sendKot(hand.rt.ctx, checkId);
-    const host = await world();
-    host.clock.ms = hand.clock.now() + 20 * 60_000;
-    await relay(hand, host);
+    net.clock.minutes(20);
+    await net.links({ hub: true });
     await host.signIn("Asha");
     expect(T.ingestArrivedKot(host.rt.ctx, k!)).toBe("late");
     expect(host.rt.fakes.hub.lateTickets()).toHaveLength(1);

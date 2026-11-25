@@ -1,25 +1,58 @@
-import { InMemoryStore, type LocalStore, type Session } from "@hostry/client-core";
+import {
+  EngineOpWriter,
+  InMemoryStore,
+  KeyRing,
+  SoftwareSigner,
+  SyncEngine,
+  SyncRunner,
+  createSyncPort,
+  restaurantRegistry,
+  restaurantSchemas,
+  type LocalStore,
+  type SealVerifier,
+  type SeriesGrant,
+  type Session,
+  type SessionStore,
+  type Signer,
+  type SyncTransport,
+} from "@hostry/client-core";
 import { AppData } from "./data/app-data";
 import { monotonicIds } from "./data/ids";
 import { StubIdentity, DEMO_MEMBERS, type StubMember } from "./data/identity-stub";
-import { LocalOpWriter } from "./data/local-writer";
-import type { IdentityPort } from "./data/ports";
+import { OpLog } from "./data/op-log";
+import type { IdentityPort, OpWriter, RecordSpec, SyncPort } from "./data/ports";
 import { seedDemo, TENANT_ID, OUTLET_ID } from "./data/seed";
-import { SyncSim } from "./data/sync-sim";
 import type { TradingCtx } from "./data/trading/ctx";
 import { createFakePrintHub } from "./devices/print-hub";
 import { createShell, type Shell } from "./shell/shell";
 
+export const OUTLET_STREAM = `outlet:${OUTLET_ID}`;
+
+/** Where this device's ops go. The native shell gives real transports (LAN hub URL, cloud gateway); tests give a simulated pair. */
+export type Upstream = {
+  hub?: SyncTransport;
+  cloud?: SyncTransport;
+  /** Seal verifier: the key ring of the outlet's devices and the cloud key (from the offline pack). */
+  verifier?: SealVerifier & { add?: KeyRing["add"] };
+  /** Switches the simulated links, when the transports are simulated; the sync sheet shows them only then. */
+  links?: { hub: { up: boolean }; cloud: { up: boolean } };
+};
+
 /**
  * Everything the app needs, wired once. The browser build and the tests both call this; the native shell (ADR-0007)
- * will replace the store, printers, drawer and sync port with real adapters without touching a screen.
+ * replaces the store, printers, drawer, signer and transports without touching a screen.
  */
 export type Runtime = {
   data: AppData;
-  writer: LocalOpWriter;
+  /** Records intents through the sync engine: numbers, rows and op commit in one local transaction. */
+  writer: OpWriter;
+  engine: SyncEngine;
   store: LocalStore;
-  sync: SyncSim;
+  sync: SyncPort;
+  /** Simulated links, when the runtime was built with them. */
+  links: { hubUp(): boolean; cloudUp(): boolean; set(l: { hub?: boolean; cloud?: boolean }, syncNow?: boolean): Promise<void> } | undefined;
   identity: IdentityPort;
+  sessions: SessionStore;
   fakes: ReturnType<typeof createFakePrintHub>;
   shell: Shell;
   ctx: TradingCtx;
@@ -29,6 +62,7 @@ export type Runtime = {
   session(): Session | undefined;
   /** Device role from activation: waiter handheld, pos counter or kds (RM-A10). */
   deviceKind: "pos" | "waiter" | "kds";
+  deviceId: string;
   now: () => number;
 };
 
@@ -37,52 +71,180 @@ export type RuntimeOptions = {
   members?: StubMember[];
   seed?: boolean;
   deviceKind?: Runtime["deviceKind"];
+  /** Series code of this device's bills ("A07"). A device that never bills (waiter handheld, KDS) may pass `billing: false`. */
   deviceCode?: string;
+  billing?: boolean;
+  deviceId?: string;
   /** Offline pack expiry (RFC 3339 UTC). */
   packExpiresAt?: string;
-  /** Start with hub and cloud reachable. Default false: the app starts offline and works. */
-  online?: boolean;
+  /** Durable store (IndexedDB in the browser build). Default: client-core's in-memory store. */
+  store?: LocalStore;
+  signer?: Signer;
+  upstream?: Upstream;
+  /** Push new ops as soon as an upstream answered (the background timer runs in any case once `sync.start()` is called). */
+  autoSync?: boolean;
 };
+
+/**
+ * Fields the screens read that the entity contracts leave to the op log: who created a row and when. The writer of the
+ * insert is the waiter of a check, the time of the insert is when a ticket was sent, a table seated, a bill asked for.
+ */
+const PROVENANCE: Record<string, { actor?: string; at?: string }> = {
+  check: { actor: "waiter_id" },
+  seating: { at: "opened_at" },
+  shift: { actor: "opened_by", at: "opened_at" },
+  kot: { at: "created_at" },
+  bill_request: { at: "requested_at" },
+  check_present: { at: "presented_at" },
+};
+
+/**
+ * WORKAROUND, remove when client-core accepts it. The intent contract says an entity-level `rank` entity (seating, shift,
+ * business_day, kot_line) moves with a `rank` mutation, but the engine's apply ignores kind `rank` there and takes only
+ * `insert` and `set` (client-core sync/apply.ts, case "rank"), so a table would never close and a shift never end. The writer
+ * validates first (on the contract's kinds), then this turns those mutations into `set`, which the engine applies as
+ * forward-only. Reported in docs/integration-notes.md.
+ */
+const RANK_ENTITIES = new Set(restaurantSchemas().filter((s) => s.policy === "rank").map((s) => s.name));
+function rankAsSet(engine: SyncEngine): SyncEngine {
+  return {
+    record: (spec: RecordSpec) =>
+      engine.record({ ...spec, build: (c) => spec.build(c).map((m) => (m.k === "rank" && RANK_ENTITIES.has(m.e) ? { ...m, k: "set" as const } : m)) }),
+  } as unknown as SyncEngine;
+}
+
+const DEVICE_KINDS: Record<Runtime["deviceKind"], string> = { pos: "pos", waiter: "waiter", kds: "kds" };
+
+/** Offline-pack series grants of one billing device: its sale series and a credit-note series. */
+export function seriesFor(deviceCode: string): SeriesGrant[] {
+  const credit = `C${deviceCode.slice(1)}`;
+  return [
+    { code: deviceCode, docType: "tax_invoice", state: "active" },
+    { code: deviceCode, docType: "bill_of_supply", state: "active" },
+    { code: deviceCode, docType: "plain_bill", state: "active" },
+    { code: credit, docType: "credit_note", state: "active" },
+  ];
+}
 
 export async function createRuntime(o: RuntimeOptions = {}): Promise<Runtime> {
   const now = o.now ?? Date.now;
-  const store = new InMemoryStore(TENANT_ID);
+  const deviceKind = o.deviceKind ?? "pos";
   const deviceCode = o.deviceCode ?? "A07";
-  let current: Session | undefined;
+  const deviceId = o.deviceId ?? `dev-${DEVICE_KINDS[deviceKind]}-${deviceCode}`;
+  const store = o.store ?? new InMemoryStore(TENANT_ID);
   const newId = monotonicIds(now);
-  const writer = new LocalOpWriter({
+
+  const signer = o.signer ?? (await SoftwareSigner.generate(`k-${deviceId}`));
+  const verifier = o.upstream?.verifier ?? new KeyRing();
+  if (signer instanceof SoftwareSigner && "add" in verifier && typeof verifier.add === "function") await verifier.add(deviceId, signer.kid, signer.publicB64);
+  const engine = await SyncEngine.open({
     store,
-    deviceId: "dev-1",
-    actor: () => current?.memberId ?? "system",
+    schemas: restaurantRegistry(),
+    deviceId,
+    outletStream: OUTLET_STREAM,
+    signer,
+    verifier,
+    packVersion: "pack-1",
     now,
     newId,
-    series: { tax_invoice: deviceCode, bill_of_supply: deviceCode, plain_bill: deviceCode, credit_note: "C07" },
   });
-  const data = new AppData(store, writer, (l) => writer.onCommit(l));
+  if (o.billing !== false && deviceKind !== "kds") await engine.setSeriesGrants(seriesFor(deviceCode));
+  else await engine.setSeriesGrants([]);
+
+  let current: Session | undefined;
+  const sessionListeners = new Set<(s: Session | undefined) => void>();
+  const sessions: SessionStore = {
+    current: () => current,
+    onChange: (l) => {
+      sessionListeners.add(l);
+      return () => void sessionListeners.delete(l);
+    },
+  };
+  const setSession = (s: Session | undefined): void => {
+    current = s;
+    // Every op carries the member and the session that wrote it. With nobody signed in, system writes (opening the day
+    // from seed data, tests) are stamped "system".
+    engine.session = { actor: s?.memberId ?? "system", sid: s?.sessionId ?? "system" };
+    for (const l of sessionListeners) l(s);
+  };
+  setSession(undefined);
+
+  const runner = new SyncRunner({
+    engine,
+    ...(o.upstream?.hub ? { hub: o.upstream.hub } : {}),
+    ...(o.upstream?.cloud ? { cloud: o.upstream.cloud } : {}),
+    now,
+    onError: () => undefined, // offline is the normal state; the status says so
+  });
+  const sync = createSyncPort(runner, engine);
+  const engineWriter = new EngineOpWriter(rankAsSet(engine), { streams: { brand: OUTLET_STREAM, tenant: OUTLET_STREAM } });
+  const autoSync = o.autoSync ?? false;
+  const writer: OpWriter = {
+    async record(spec: RecordSpec) {
+      const op = await engineWriter.record(spec);
+      if (autoSync && engine.status().online) void runner.syncNow();
+      return op;
+    },
+  };
+
+  const opLog = new OpLog(engine, store.tenantId);
+  const data = new AppData(store, writer, async (e) => {
+    if (e === "_op") return opLog.rows();
+    if (e === "_local") return store.list("_local");
+    const rows = await engine.rows(e);
+    // Provenance the entity contracts leave to the op log: the waiter of a check, when a table was seated, who opened a shift.
+    const prov = PROVENANCE[e];
+    if (prov) {
+      await opLog.rows(); // brings the index up to date
+      return rows.map((r) => {
+        const p = opLog.insertedBy(e, r.id);
+        if (!p) return r;
+        return { ...r, ...(prov.actor ? { [prov.actor]: p.actor } : {}), ...(prov.at ? { [prov.at]: p.at } : {}) };
+      });
+    }
+    return rows;
+  });
+  // Rows from other devices arrive while a sync round runs: reload the snapshot when the engine says something changed.
+  engine.onStatus(() => void data.refresh());
+
   const members = o.members ?? DEMO_MEMBERS;
-  const identity = new StubIdentity({ members, now, ...(o.packExpiresAt ? { packExpiresAt: o.packExpiresAt } : {}) });
+  const identity = new StubIdentity({ members, now, deviceId, ...(o.packExpiresAt ? { packExpiresAt: o.packExpiresAt } : {}) });
   const names = new Map(members.map((m) => [m.memberId, m.displayName]));
   const fakes = createFakePrintHub(now);
-  const sync = new SyncSim(data, writer, now);
-  if (o.seed !== false) await seedDemo(store);
+  if (o.seed !== false) await seedDemo(engine);
   await data.refresh();
-  if (o.online) await sync.setLinks({ hub: true, cloud: true });
   const ctx: TradingCtx = { data, session: () => current, now, newId, print: fakes.hub, outletId: OUTLET_ID, deviceCode, nameOf: (id) => names.get(id) ?? id };
+
+  const links = o.upstream?.links;
   return {
     data,
     writer,
+    engine,
     store,
     sync,
+    links: links
+      ? {
+          hubUp: () => links.hub.up,
+          cloudUp: () => links.cloud.up,
+          set: async (l, syncNow = true) => {
+            if (l.hub !== undefined) links.hub.up = l.hub;
+            if (l.cloud !== undefined) links.cloud.up = l.cloud;
+            if (!syncNow) return;
+            await runner.syncNow();
+            await data.refresh();
+          },
+        }
+      : undefined,
     identity,
+    sessions,
     fakes,
     shell: createShell(),
     ctx,
     names,
-    setSession: (s) => {
-      current = s;
-    },
+    setSession,
     session: () => current,
-    deviceKind: o.deviceKind ?? "pos",
+    deviceKind,
+    deviceId,
     now,
   };
 }

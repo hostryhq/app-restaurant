@@ -196,10 +196,13 @@ describe("sync status, offline and blackout banners", () => {
     expect(pending).toBeGreaterThan(1);
     expect(ui.rt.sync.status().state).toBe("offline");
     await until(() => expect(text("sync-chip")).toContain(String(pending)));
-    await ui.rt.sync.setLinks({ hub: true });
+    await ui.rt.links?.set({ hub: true });
     await until(() => expect(ui.rt.sync.status()).toMatchObject({ state: "pending", pendingOps: 0, upstream: "hub" }));
     expect(ui.rt.sync.status().atHubOps).toBe(pending);
-    await ui.rt.sync.setLinks({ cloud: true });
+    // The hub's own uplink comes back: it relays to the cloud, and the device sees its ops confirmed on its next round.
+    ui.net.hubCloud.up = true;
+    await ui.net.relay();
+    await ui.rt.sync.syncNow();
     await until(() => expect(ui.rt.sync.status().state).toBe("synced"));
   });
 
@@ -241,7 +244,7 @@ describe("KDS", () => {
     await ui.tap(`kds-bump-${kot?.id}`);
     expect(ui.taps()).toBe(TAP_BUDGET.bump);
     await until(() => expect(rows<{ status: string }>(ui.rt, "kot_line").filter((l) => l.status === "ready")).toHaveLength(1));
-    await ui.rt.sync.setLinks({ hub: false, cloud: false });
+    await ui.rt.links?.set({ hub: false, cloud: false });
     await until(() => expect(queryById("kds-offline")).not.toBeNull());
   });
 });

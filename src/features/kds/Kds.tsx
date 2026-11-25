@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, KdsBoard, KdsItemRow, KdsTicket, StationSelect } from "@hostry/ui-kit";
 import { kdsTickets, type KdsTicketView } from "../../domain/kds";
-import type { Kot, KotHandover, KotLine, Station } from "../../domain/rows";
+import type { Kot, KotHandover, KotLine, OrderLine, OrderLineCancel, Station } from "../../domain/rows";
 import { acknowledge, bump, recall, stepItem } from "../../data/trading";
 import { useApp } from "../app-state";
 import { Empty } from "../common";
@@ -22,7 +22,7 @@ export function Kds(): JSX.Element {
     const snap = app.snap();
     const acked = new Set(snap.list<{ kind?: string; kot_id?: string }>("_local").filter((r) => r.kind === "kds_ack").map((r) => r.kot_id as string));
     const codes = station() ? [station() as string] : [];
-    return kdsTickets({ kots: snap.list<Kot>("kot"), lines: snap.list<KotLine>("kot_line"), handovers: snap.list<KotHandover>("kot_handover"), acked, stationCodes: codes, nowMs: app.nowMs() });
+    return kdsTickets({ kots: snap.list<Kot>("kot"), lines: snap.list<KotLine>("kot_line"), cancels: snap.list<OrderLineCancel>("order_line_cancel"), orderLines: snap.list<OrderLine>("order_line"), handovers: snap.list<KotHandover>("kot_handover"), acked, stationCodes: codes, nowMs: app.nowMs() });
   });
   const pick = (id: string) => {
     const code = id || undefined;

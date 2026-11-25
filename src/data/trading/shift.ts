@@ -10,12 +10,12 @@ import { need, TradingError, isoNow, type ListFn, type TradingCtx } from "./ctx"
 
 /** RS02: open a shift with the counted float. Needed only at the first cash payment, and only when the outlet requires it (AC 145, 146). */
 export async function startShift(ctx: TradingCtx, floatPaise: number): Promise<string> {
-  const s = need(ctx, "shift.open");
+  need(ctx, "shift.open");
   const date = await ensureDayOpen(ctx);
   const list: ListFn = (e) => ctx.data.snapshot().list(e);
   if (openShift(list)) throw new TradingError("refused", "a shift is already open");
   const id = ctx.newId();
-  await ctx.data.write({ intent: "shift.open", build: (b) => [{ e: "shift", id, k: "insert", f: { business_date: date, opening_float_paise: floatPaise, status: "open", opened_by: s.memberId, opened_at: new Date(b.now).toISOString() } }] });
+  await ctx.data.write({ intent: "shift.open", build: () => [{ e: "shift", id, k: "insert", f: { business_date: date, opening_float_paise: floatPaise, status: "open" } }] });
   return id;
 }
 
@@ -27,7 +27,8 @@ export function lastClosingFloat(list: ListFn): number {
 
 /** Cash the drawer should hold for a shift. The cashier never sees this before counting (blind count, AC 147). */
 export function expectedCashFor(list: ListFn, shift: Shift): number {
-  const ops = (list("_op") as OpRow[]).filter((o) => o.at >= shift.opened_at);
+  // The drawer is this device's: only cash payments recorded here count.
+  const ops = (list("_op") as OpRow[]).filter((o) => o.own && o.at >= shift.opened_at);
   const payIds = new Set(ops.flatMap((o) => o.muts.filter((m) => m.e === "payment").map((m) => m.id)));
   const cashPayments = (list("payment") as unknown as PaymentRow[]).filter((p) => payIds.has(p.id) && p.tender === "cash").reduce((s, p) => s + p.amount_paise, 0);
   const events = (list("cash_event") as CashEvent[]).filter((e) => e.shift_id === shift.id);

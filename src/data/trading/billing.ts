@@ -100,7 +100,7 @@ function discountApproved(list: ListFn, checkId: string): boolean {
 export async function billPlease(ctx: TradingCtx, checkId: string): Promise<void> {
   need(ctx, "bill.request");
   const check = checkOf((e) => ctx.data.snapshot().list(e), checkId);
-  await ctx.data.write({ intent: "bill.request", build: (b) => [{ e: "bill_request", id: b.newId(), k: "insert", f: { check_id: checkId, ...(check.seating_id ? { seating_id: check.seating_id } : {}), requested_at: new Date(b.now).toISOString() } }] });
+  await ctx.data.write({ intent: "bill.request", build: (b) => [{ e: "bill_request", id: b.newId(), k: "insert", f: { check_id: checkId, ...(check.seating_id ? { seating_id: check.seating_id } : {}) } }] });
 }
 
 /**
@@ -130,7 +130,7 @@ export async function present(ctx: TradingCtx, checkId: string, mode: "printed" 
     tableLabel: tableLabelOf(list, check),
     ...(waiter ? { waiter } : {}),
   });
-  await ctx.data.write({ intent: "bill.present", build: () => [{ e: "check_present", id: r.row.id, k: "insert", f: { check_id: checkId, present_count: count, content_hash: r.row.content_hash, total_paise: r.row.total_paise, mode, presented_at: isoNow(ctx) } }] });
+  await ctx.data.write({ intent: "bill.present", build: () => [{ e: "check_present", id: r.row.id, k: "insert", f: { check_id: checkId, present_count: count, content_hash: r.row.content_hash, total_paise: r.row.total_paise, mode } }] });
   if (mode === "printed" && ctx.print.has(BILL_PRINTER)) {
     ctx.print.print(BILL_PRINTER, r.doc, { jobId: r.row.id, trigger: "manual" });
     await ctx.print.flush();
@@ -222,14 +222,17 @@ export async function settle(ctx: TradingCtx, checkId: string, o: { payments: Pa
 
   let billId = "";
   let result!: { number: string; total: number };
+  // Read before the write, from the snapshot: inside the engine's transaction the op log is not a table, and the waiter of a
+  // check is provenance the snapshot adds from the op log.
+  const approved = discountApproved(list0, checkId);
   await ctx.data.write({
     intent: "bill.finalize",
     build: (b) => {
       const list = b.list;
-      const check = checkOf(list, checkId);
+      const check = { ...checkOf(list, checkId), ...(check0.waiter_id ? { waiter_id: check0.waiter_id } : {}) };
       const lines = liveLines(list, checkId);
       const bctx = billingContextFrom(list, ctx.outletId);
-      const f = finalizeBill(depsFor(b), bctx, toHeader(check), lines.map(toBillable), { payments: o.payments, discountApproved: discountApproved(list, checkId) });
+      const f = finalizeBill(depsFor(b), bctx, toHeader(check), lines.map(toBillable), { payments: o.payments, discountApproved: approved });
       billId = f.bill.id;
       result = { number: f.bill.number, total: f.bill.total_paise };
       const muts: Mutation[] = billMutations(f);

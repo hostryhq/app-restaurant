@@ -23,6 +23,7 @@ export const ENTITIES = [
   "kot",
   "kot_line",
   "kot_handover",
+  "kot_print",
   "bill_request",
   "check_present",
   "check_cancel",
@@ -64,24 +65,26 @@ export class Snapshot {
   }
 }
 
+/** Where the snapshot's rows come from: the sync engine's visible rows, its op log, and the device-local table. */
+export type RowSource = (entity: string) => Promise<Row[]>;
+
 /**
  * The app's view of the local store. Writes go through `write` (an intent with mutations, committed locally first) and
  * the snapshot is reloaded before `write` resolves, so a screen always reads what was just written. Nothing here waits on
- * the network.
+ * the network. Rows changed by a sync round (another device's ops) arrive through `refresh`, which the runtime calls when
+ * the engine reports a change.
  */
 export class AppData {
   private snap = new Snapshot();
   private listeners = new Set<() => void>();
   private chain: Promise<void> = Promise.resolve();
+  private queued: Promise<void> | undefined;
 
   constructor(
     readonly store: LocalStore,
     readonly writer: OpWriter,
-    onCommit?: (listener: () => void) => () => void,
-  ) {
-    // Commits from anywhere (a sync round delivering ops, a second writer) refresh the snapshot too.
-    onCommit?.(() => void this.refresh());
-  }
+    private readonly source: RowSource,
+  ) {}
 
   snapshot(): Snapshot {
     return this.snap;
@@ -92,15 +95,22 @@ export class AppData {
     return () => void this.listeners.delete(l);
   }
 
-  /** Reload the snapshot from the store. Calls are serialised so the last one wins. */
+  /**
+   * Reload the snapshot from the store. Calls are serialised so the last one wins, and a call made while another is
+   * waiting to start joins it (a write and the engine's change notice both ask for one reload).
+   */
   refresh(): Promise<void> {
-    this.chain = this.chain.then(async () => {
+    if (this.queued) return this.queued;
+    const run = this.chain.then(async () => {
+      this.queued = undefined;
       const tables: Record<string, Row[]> = {};
-      for (const e of ENTITIES) tables[e] = await this.store.list(e);
+      for (const e of ENTITIES) tables[e] = await this.source(e);
       this.snap = new Snapshot(tables);
       for (const l of this.listeners) l();
     });
-    return this.chain;
+    this.queued = run;
+    this.chain = run.catch(() => undefined);
+    return run;
   }
 
   async write(spec: RecordSpec): Promise<RecordedOp> {

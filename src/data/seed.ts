@@ -1,4 +1,4 @@
-import type { LocalStore, Row } from "@hostry/client-core";
+import { itemOutletId, type Mutation, type Row, type SyncEngine } from "@hostry/client-core";
 
 /**
  * Demo outlet for the browser build and tests: what a device holds after the first sync (menu, tables, stations,
@@ -106,7 +106,7 @@ export function demoRows(): Seeded {
       r("img-2", { item_id: "it-chicken", group_id: "mg-extra", sort_order: 2 }),
     ],
     price_entry: prices,
-    item_outlet: quick.map((id, n) => r(`io-${id}`, { item_id: id, available: true, quick_item: true, quick_sort: n + 1 })),
+    item_outlet: quick.map((id, n) => r(itemOutletId(OUTLET_ID, id), { item_id: id, available: true, quick_item: true, quick_sort: n + 1 })),
     station: [
       r("st-kitchen", { code: "KITCHEN", name: "Kitchen", output: "both", language: "en", printer_id: "prn-kitchen" }),
       r("st-bar", { code: "BAR", name: "Bar", output: "kds", language: "en" }),
@@ -149,6 +149,8 @@ export function demoRows(): Seeded {
         shift_required: true,
         handover_count: false,
         day_cutoff_minutes: 300,
+        // Paper bill-book series typed in after a power cut (not an entity field yet: tenancy registrations will carry it).
+        manual_book_codes: ["MB1"],
       }),
     ],
     outlet_settings: [r("os-1", { cancel_grace_seconds: 0, kot_stale_after_seconds: 900, send_timeout_seconds: 3, kot_fallback_print: "auto", covers_required: false, idle_lock_seconds: 300, soldout_resets_daily: true, kds_amber_minutes: 10, kds_red_minutes: 20 })],
@@ -159,11 +161,27 @@ export function demoRows(): Seeded {
   };
 }
 
-/** Write the demo rows into a store, as if a first sync had delivered them. */
-export async function seedDemo(store: LocalStore, extra: Seeded = {}): Promise<void> {
+/**
+ * Record the demo rows as one op, standing in for the configuration the cloud publishes (menu, floor, settings, rule
+ * set). They go through the engine, not into the store directly, so the sync engine owns every row it later merges
+ * (last-writer-wins candidates) and other devices on the network receive them like any other op. The op is a demo
+ * fixture ("seed.demo", not in the intent registry): a device with a real pack gets this configuration from sync instead.
+ */
+export async function seedDemo(engine: SyncEngine, extra: Seeded = {}): Promise<void> {
   const all = { ...demoRows(), ...extra };
-  await store.transact((tx) => {
-    for (const [entity, rows] of Object.entries(all)) for (const row of rows) tx.put(entity, row);
+  await engine.record({
+    intent: "seed.demo",
+    actor: "system",
+    sid: "system",
+    build: () =>
+      Object.entries(all).flatMap(([entity, rows]) =>
+        rows.map((row): Mutation => {
+          const f: Record<string, unknown> = { ...row };
+          delete f.id;
+          delete f.tenant_id;
+          return { e: entity, id: row.id, k: "insert", f };
+        }),
+      ),
   });
 }
 

@@ -2,7 +2,7 @@ import { businessDayId, dateToOpen, type LineSelection, type Mutation } from "@h
 import { matchingDraft, liveQty } from "../../domain/lines";
 import type { BusinessDay, Check, Order, OrderLine, OrderLineCancel, Seating } from "../../domain/rows";
 import { menuFrom } from "../context";
-import { need, requireDay, TradingError, isoNow, type ListFn, type TradingCtx } from "./ctx";
+import { need, requireDay, TradingError, type ListFn, type TradingCtx } from "./ctx";
 
 /** Opens today's business day if none is open (a device opens a day only when it knows of none; ADR-0014 A1.1). */
 export async function ensureDayOpen(ctx: TradingCtx): Promise<string> {
@@ -35,7 +35,7 @@ export function openSeatingOf(list: ListFn, tableId: string): Seating | undefine
 
 /** Open seating and its first open check for a table; created together on the first item (AC 39). */
 export async function openTableCheck(ctx: TradingCtx, tableId: string): Promise<{ seatingId: string; checkId: string }> {
-  const s = need(ctx, "order.create");
+  need(ctx, "order.create");
   const date = await ensureDayOpen(ctx);
   const snap = () => ctx.data.snapshot();
   const existing = openSeatingOf((e) => snap().list(e), tableId);
@@ -45,16 +45,16 @@ export async function openTableCheck(ctx: TradingCtx, tableId: string): Promise<
     const checkId = ctx.newId();
     await ctx.data.write({
       intent: "check.create",
-      build: () => [{ e: "check", id: checkId, k: "insert", f: { seating_id: existing.id, order_type: "dine_in", business_date: date, status: "open", waiter_id: s.memberId } }],
+      build: () => [{ e: "check", id: checkId, k: "insert", f: { seating_id: existing.id, order_type: "dine_in", business_date: date, status: "open" } }],
     });
     return { seatingId: existing.id, checkId };
   }
   const seatingId = ctx.newId();
   const checkId = ctx.newId();
-  await ctx.data.write({ intent: "seating.open", build: () => [{ e: "seating", id: seatingId, k: "insert", f: { table_id: tableId, business_date: date, status: "open", opened_at: isoNow(ctx) } }] });
+  await ctx.data.write({ intent: "seating.open", build: () => [{ e: "seating", id: seatingId, k: "insert", f: { table_id: tableId, business_date: date, status: "open" } }] });
   await ctx.data.write({
     intent: "check.create",
-    build: () => [{ e: "check", id: checkId, k: "insert", f: { seating_id: seatingId, order_type: "dine_in", business_date: date, status: "open", waiter_id: s.memberId } }],
+    build: () => [{ e: "check", id: checkId, k: "insert", f: { seating_id: seatingId, order_type: "dine_in", business_date: date, status: "open" } }],
   });
   await ctx.data.write({ intent: "order.create", build: () => [{ e: "order", id: ctx.newId(), k: "insert", f: { seating_id: seatingId, order_type: "dine_in", business_date: date, source: "pos" } }] });
   return { seatingId, checkId };
@@ -62,23 +62,23 @@ export async function openTableCheck(ctx: TradingCtx, tableId: string): Promise<
 
 /** A new counter or takeaway order with the next token of the business date. */
 export async function newCounterCheck(ctx: TradingCtx, orderType: "counter" | "takeaway" = "counter"): Promise<string> {
-  const s = need(ctx, "order.create");
+  need(ctx, "order.create");
   const date = await ensureDayOpen(ctx);
   const tokens = ctx.data.snapshot().list<Check>("check").filter((c) => c.business_date === date && c.token_no !== undefined).map((c) => c.token_no as number);
   const token = (tokens.length ? Math.max(...tokens) : 0) + 1;
   const checkId = ctx.newId();
-  await ctx.data.write({ intent: "check.create", build: () => [{ e: "check", id: checkId, k: "insert", f: { order_type: orderType, token_no: token, business_date: date, status: "open", waiter_id: s.memberId } }] });
+  await ctx.data.write({ intent: "check.create", build: () => [{ e: "check", id: checkId, k: "insert", f: { order_type: orderType, token_no: token, business_date: date, status: "open" } }] });
   await ctx.data.write({ intent: "order.create", build: () => [{ e: "order", id: ctx.newId(), k: "insert", f: { order_type: orderType, token_no: token, business_date: date, source: "pos" } }] });
   return checkId;
 }
 
 /** A second bill on an occupied table (RS09 New bill). */
 export async function newBill(ctx: TradingCtx, seatingId: string): Promise<string> {
-  const s = need(ctx, "bill.new");
+  need(ctx, "bill.new");
   const date = requireDay((e) => ctx.data.snapshot().list(e));
   const n = ctx.data.snapshot().list<Check>("check").filter((c) => c.seating_id === seatingId).length + 1;
   const id = ctx.newId();
-  await ctx.data.write({ intent: "bill.new", build: () => [{ e: "check", id, k: "insert", f: { seating_id: seatingId, order_type: "dine_in", label: `Bill ${n}`, business_date: date, status: "open", waiter_id: s.memberId } }] });
+  await ctx.data.write({ intent: "bill.new", build: () => [{ e: "check", id, k: "insert", f: { seating_id: seatingId, order_type: "dine_in", label: `Bill ${n}`, business_date: date, status: "open" } }] });
   return id;
 }
 
@@ -109,7 +109,7 @@ export async function addLine(ctx: TradingCtx, checkId: string, sel: LineSelecti
   await ctx.data.write({
     intent: "order.line.add",
     build: (b) => {
-      const muts: Mutation[] = [{ e: "order_line", id, k: "insert", f: { ...draft, order_id: orderId, check_id: checkId, added_at: new Date(b.now).toISOString() } }];
+      const muts: Mutation[] = [{ e: "order_line", id, k: "insert", f: { ...draft, order_id: orderId, check_id: checkId } }];
       for (const m of groups) muts.push({ e: "order_line_modifier", id: b.newId(), k: "insert", f: { order_line_id: id, modifier_id: m.id, name: m.name, price_delta_paise: m.price_delta_paise } });
       return muts;
     },

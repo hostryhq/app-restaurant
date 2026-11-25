@@ -6,16 +6,16 @@ import { useApp } from "../app-state";
 import { BackButton } from "../common";
 
 /**
- * RS23: sync status. Hub, cloud, last sync, oldest pending, failed prints. The two switches below drive the sync simulator
- * (browser and test builds); the native shell replaces the simulator with the real runner and this block disappears.
+ * RS23: sync status. Hub, cloud, last sync, oldest pending, failed prints. The two switches below drive the simulated
+ * links and show only when the runtime was built with them (tests); a device with real transports has no switches.
  */
 export function SyncSheet(): JSX.Element {
   const app = useApp();
   const s = () => app.sync();
   const oldest = () => app.snap().list<OpRow>("_op").filter((o) => o.delivery === "local").sort((a, b) => a.at.localeCompare(b.at))[0];
-  const sim = app.rt.sync;
-  const hub = () => (s(), sim.hubUp);
-  const cloud = () => (s(), sim.cloudUp);
+  const sim = app.rt.links;
+  const hub = () => (s(), sim?.hubUp() ?? false);
+  const cloud = () => (s(), sim?.cloudUp() ?? false);
   return (
     <section data-testid="sync-screen">
       <BackButton />
@@ -29,10 +29,12 @@ export function SyncSheet(): JSX.Element {
         <p data-testid="sync-oldest">{app.t("sync.oldest", { time: formatIst(oldest()?.at ?? "") })}</p>
       </Show>
       <p data-testid="sync-failed-prints">{app.t("sync.failedprints", { n: app.jobs().filter((j) => j.lastError).length })}</p>
-      <h2>{app.t("sync.sim")}</h2>
-      <CheckRow label={app.t("sync.sim.hub")} checked={hub()} data-testid="sim-hub" onChange={(on) => void sim.setLinks({ hub: on })} />
-      <CheckRow label={app.t("sync.sim.cloud")} checked={cloud()} data-testid="sim-cloud" onChange={(on) => void sim.setLinks({ cloud: on })} />
-      <Button variant="secondary" data-testid="sync-now" onClick={() => void sim.syncNow()}>
+      <Show when={sim}>
+        <h2>{app.t("sync.sim")}</h2>
+        <CheckRow label={app.t("sync.sim.hub")} checked={hub()} data-testid="sim-hub" onChange={(on) => void sim?.set({ hub: on })} />
+        <CheckRow label={app.t("sync.sim.cloud")} checked={cloud()} data-testid="sim-cloud" onChange={(on) => void sim?.set({ cloud: on })} />
+      </Show>
+      <Button variant="secondary" data-testid="sync-now" onClick={() => void app.rt.sync.syncNow()}>
         {app.t("sync.now")}
       </Button>
     </section>
