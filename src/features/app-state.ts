@@ -1,3 +1,4 @@
+import { featureOn, tradingStanding, type TradingStanding } from "../domain/entitlements";
 import { createContext, createMemo, createSignal, onCleanup, useContext, type Accessor } from "solid-js";
 import { can as coreCan, type LateTicket, type Session } from "@hostry/client-core";
 import { toasts, type Translator } from "@hostry/ui-kit";
@@ -55,6 +56,10 @@ export type App = {
   go(v: View): void;
   back(): void;
   can(permission: string): boolean;
+  /** Optional feature offered by the entitlement snapshot (no snapshot: none). Core billing is never asked. */
+  feature(key: string): boolean;
+  /** Whether new trading may start: false only for a suspended or closed organisation with no day in progress (ADR-0014 A1.2). */
+  tradingStanding: Accessor<TradingStanding>;
   nameOf(memberId: string): string;
   /** Runs a trading action; a refusal becomes a message, never a crash. Returns true when it succeeded. */
   run<T>(fn: () => Promise<T>, then?: (r: T) => void): Promise<boolean>;
@@ -106,6 +111,8 @@ export function createApp(rt: Runtime, t: Translator["t"], initial?: { session?:
     setSnap(rt.data.snapshot());
     setNow(rt.now());
   });
+  const [ent, setEnt] = createSignal(rt.entitlements(), { equals: false });
+  const offEnt = rt.onEntitlements(() => setEnt(rt.entitlements()));
   const offSync = rt.sync.onStatus((s) => setSync(s));
   const offPrint = rt.fakes.hub.subscribe(() => {
     setJobs(rt.fakes.hub.jobs());
@@ -119,11 +126,19 @@ export function createApp(rt: Runtime, t: Translator["t"], initial?: { session?:
   onCleanup(() => {
     offData();
     offSync();
+    offEnt();
     offPrint();
     clearInterval(tick);
   });
 
   const holds = createMemo(() => session());
+  const standing = createMemo(() =>
+    tradingStanding(
+      ent(),
+      snap().list<{ business_date: string; status: string }>("business_day").filter((d) => d.status === "open").map((d) => d.business_date),
+      nowMs(),
+    ),
+  );
   const app: App = {
     rt,
     t,
@@ -146,6 +161,8 @@ export function createApp(rt: Runtime, t: Translator["t"], initial?: { session?:
       setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
     },
     can: (p) => coreCan(holds(), p, rt.ctx.outletId, new Date(rt.now())),
+    feature: (key) => featureOn(ent(), key),
+    tradingStanding: standing,
     nameOf: (id) => rt.names.get(id) ?? id,
     async run(fn, then) {
       try {

@@ -19,6 +19,7 @@ import {
 } from "@hostry/client-core";
 import { AppData } from "./data/app-data";
 import { monotonicIds } from "./data/ids";
+import { adoptEntitlements, parseEntitlements, type EntitlementSnapshot } from "./domain/entitlements";
 import { PackIdentity } from "./data/auth/pack-identity";
 import { brandStreamOf, outletStreamOf, tenantStreamOf, type DeviceKind, type DevicePack, type PinProver } from "./data/auth/pack";
 import { OpLog } from "./data/op-log";
@@ -65,6 +66,11 @@ export type Runtime = {
   deviceId: string;
   /** The offline pack this runtime was built from: tenant, outlet, device, series and staff all come from it. */
   pack: DevicePack;
+  /** The entitlement snapshot held now (from the pack claim, raised by `adoptPack`). `undefined`: none known, trading continues. */
+  entitlements(): EntitlementSnapshot | undefined;
+  /** Adopts the entitlements of a refreshed pack when `entitlements_v` is higher than the one held; true when it did. Nothing else of the pack changes here. */
+  adoptPack(refreshed: unknown): boolean;
+  onEntitlements(fn: () => void): () => void;
   now: () => number;
 };
 
@@ -239,6 +245,9 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   await data.refresh();
   const ctx: TradingCtx = { data, session: () => current, now, newId, print: fakes.hub, outletId: pack.outletId, deviceCode, manualBookCodes: pack.manualBooks, nameOf: (id) => names.get(id) ?? id, vector: () => engine.vector() };
 
+  let ent = pack.entitlements;
+  const entListeners = new Set<() => void>();
+
   const links = o.upstream?.links;
   const rt: Runtime = {
     data,
@@ -270,6 +279,18 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
     deviceKind,
     deviceId,
     pack,
+    entitlements: () => ent,
+    adoptPack(refreshed) {
+      const next = adoptEntitlements(ent, parseEntitlements((refreshed as { entitlements?: unknown } | null)?.entitlements));
+      if (next === ent) return false;
+      ent = next;
+      for (const fn of entListeners) fn();
+      return true;
+    },
+    onEntitlements(fn) {
+      entListeners.add(fn);
+      return () => void entListeners.delete(fn);
+    },
     now,
   };
   ref.rt = rt;

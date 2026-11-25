@@ -1,6 +1,7 @@
 import { createMemo, For, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { AppShell, Banner, Button, ModeBar, PrinterStatus, SyncStatus, ToastRegion, type ModeItem } from "@hostry/ui-kit";
+import { FEATURE } from "../../domain/entitlements";
 import { dayCloseOverdue } from "../../domain/shift-day";
 import { lateDays } from "../../data/trading";
 import type { BusinessDay } from "../../domain/rows";
@@ -28,6 +29,9 @@ export function Shell(props: { children?: JSX.Element }): JSX.Element {
     }
     const lateDocs = app.can("day.close") ? lateDays((e) => app.snap().list(e)).reduce((n, d) => n + d.billNumbers.length + d.noteNumbers.length, 0) : 0;
     if (lateDocs > 0) out.push({ id: "docs-late", kind: "info", text: app.t("shell.docs.late", { n: lateDocs }), action: { label: app.t("shell.docs.late.open"), run: () => app.go({ id: "dayclose" }) } });
+    const st = app.tradingStanding();
+    if (st.ending) out.push({ id: "org-ending", kind: "warning", text: app.t(st.status === "closed" ? "shell.org.closed.ending" : "shell.org.suspended.ending") });
+    if (!st.startNew) out.push({ id: "org-stopped", kind: "danger", text: app.t(st.status === "closed" ? "shell.org.closed" : "shell.org.suspended") });
     const packMs = Date.parse(app.rt.identity.packExpiresAt()) - app.nowMs();
     if (packMs < 48 * 3_600_000) out.push({ id: "pack", kind: "warning", text: app.t("shell.pack.expiring", { date: app.rt.identity.packExpiresAt().slice(0, 10) }) });
     if (app.late().length > 0 && !out.some((n) => n.id === "blackout")) {
@@ -38,9 +42,10 @@ export function Shell(props: { children?: JSX.Element }): JSX.Element {
 
   const modes = createMemo<ModeItem[]>(() => {
     const m: ModeItem[] = [];
-    if (app.rt.deviceKind !== "kds" && app.can("order.create")) m.push({ id: "tables", label: app.t("mode.tables") });
-    if (app.rt.deviceKind === "pos" && app.can("order.create")) m.push({ id: "counter", label: app.t("mode.counter") });
-    if (app.can("kds.bump")) m.push({ id: "kitchen", label: app.t("mode.kitchen") });
+    const starting = app.tradingStanding().startNew;
+    if (starting && app.rt.deviceKind !== "kds" && app.can("order.create")) m.push({ id: "tables", label: app.t("mode.tables") });
+    if (starting && app.rt.deviceKind === "pos" && app.can("order.create")) m.push({ id: "counter", label: app.t("mode.counter") });
+    if (app.can("kds.bump") && app.feature(FEATURE.kds)) m.push({ id: "kitchen", label: app.t("mode.kitchen") });
     if (app.can("report.view") || app.can("*")) m.push({ id: "owner", label: app.t("mode.owner") });
     return m;
   });

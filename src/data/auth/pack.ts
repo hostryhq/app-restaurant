@@ -1,4 +1,5 @@
 import type { SeriesGrant } from "@hostry/client-core";
+import { parseEntitlements, type EntitlementSnapshot } from "../../domain/entitlements";
 
 /**
  * What the device holds after activation (ADR-0005 s5 and s6): the offline pack. Tenant, outlet, device, series and the
@@ -40,6 +41,8 @@ export type DevicePack = {
   members: PackMember[];
   /** Active paper bill books of the outlet, entry-only (pack `manual_books`; typed, never allocated). Absent in the pack means none. */
   manualBooks: string[];
+  /** The pack's signed `entitlements` claim. Absent (or malformed) means no optional feature is known; trading continues (ADR-0014 T10). */
+  entitlements?: EntitlementSnapshot;
 };
 
 export class PackError extends Error {
@@ -60,6 +63,9 @@ export function packFromJson(raw: unknown): DevicePack {
   if (!Number.isInteger(p.packV) || (p.packV as number) < 1) throw new PackError("packV must be an integer >= 1");
   if (!Array.isArray(p.members) || !Array.isArray(p.series)) throw new PackError("members and series are required");
   p.manualBooks = Array.isArray(p.manualBooks) ? p.manualBooks : [];
+  const ent = parseEntitlements(p.entitlements);
+  if (ent) p.entitlements = ent;
+  else delete p.entitlements;
   for (const g of p.series) if (!isStr(g?.seriesId)) throw new PackError("series without seriesId");
   for (const m of p.members) if (!isStr(m?.memberId) || !Number.isInteger(m.pinV) || m.pinV < 1 || !Array.isArray(m.perms)) throw new PackError("bad member");
   return p as DevicePack;

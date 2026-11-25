@@ -1,5 +1,6 @@
 import { approvalProofMessage, sessionProofMessage, type SeriesGrant } from "@hostry/client-core";
 import type { ApprovalProofInput, DeviceKind, DevicePack, PackMember, PinProver, SessionProofInput } from "../data/auth/pack";
+import type { EntitlementSnapshot } from "../domain/entitlements";
 import { DEMO_OUTLET_ID, DEMO_TENANT_ID } from "./demo-outlet";
 
 /**
@@ -70,7 +71,20 @@ export function demoSeries(deviceCode: string): SeriesGrant[] {
   ];
 }
 
+/** Every feature of the table_service plan, active organisation: what the demo device holds. */
+export const DEMO_ENTITLEMENTS: EntitlementSnapshot = {
+  entitlements_v: 1,
+  plan_key: "table_service",
+  plan_version: 1,
+  features: ["restaurant.captain", "restaurant.core", "restaurant.kds", "restaurant.reports.core"],
+  limits: { outlets: 1 },
+  organisation_status: "active",
+  as_of: "2026-11-01T00:00:00Z",
+};
+
 export type DemoPackOptions = {
+  /** Entitlement snapshot of the pack; `null` leaves it out (a device that never received one). */
+  entitlements?: EntitlementSnapshot | null;
   deviceKind?: DeviceKind;
   deviceCode?: string;
   deviceId?: string;
@@ -100,6 +114,7 @@ export function demoPack(o: DemoPackOptions = {}): { pack: DevicePack; prover: D
     packV: o.packV ?? 1,
     expiresAt: o.expiresAt ?? new Date(now() + 7 * 86_400_000).toISOString(),
     manualBooks: o.manualBooks ?? ["MB1"],
+    ...(o.entitlements === null ? {} : { entitlements: o.entitlements ?? DEMO_ENTITLEMENTS }),
     series: o.billing !== false && deviceKind !== "kds" ? demoSeries(deviceCode) : [],
     members: members.map((m): PackMember => ({ memberId: m.memberId, displayName: m.displayName, role: m.role, perms: ROLE_PERMS[m.role] ?? [], pinV: m.pinV ?? 1 })),
   };
