@@ -90,8 +90,9 @@ export function createApp(rt: Runtime, t: Translator["t"], initial?: { session?:
   const [sync, setSync] = createSignal<SyncView>(rt.sync.status(), { equals: false });
   const [jobs, setJobs] = createSignal<QueueJob[]>(rt.fakes.hub.jobs(), { equals: false });
   const [late, setLate] = createSignal<readonly LateTicket[]>(rt.fakes.hub.lateTickets(), { equals: false });
-  const [mode, setModeSig] = createSignal<Mode>(rt.deviceKind === "kds" ? "kitchen" : rt.deviceKind === "waiter" ? "tables" : "counter");
-  const [stack, setStack] = createSignal<View[]>([defaultView(mode())]);
+  const initialMode: Mode = rt.deviceKind === "kds" ? "kitchen" : rt.deviceKind === "waiter" ? "tables" : "counter";
+  const [mode, setModeSig] = createSignal<Mode>(initialMode);
+  const [stack, setStack] = createSignal<View[]>([defaultView(initialMode)]);
   const [proof, setProof] = createSignal<ProofRequest | undefined>(undefined);
   let proofResolve: ((r: ProofResult) => void) | undefined;
   let lastActive = rt.now();

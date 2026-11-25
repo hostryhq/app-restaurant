@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, onSettled, Show } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import type { PaymentInput, Tender as TenderKind } from "@hostry/client-core";
 import { AmountBreakdown, AmountField, Button, Input, PaymentRow, QuickAmountChips, ShareList, Stepper, TenderTabs, toasts, type BreakdownRow, type Share } from "@hostry/ui-kit";
@@ -98,6 +98,16 @@ export function Tender(props: { checkId: string; exact?: boolean }): JSX.Element
   onSettled(() => {
     if (props.exact && sum()) exact();
   });
+
+  // F9 pays the due amount in the selected tender and settles; Esc goes back (it never discards the order). Counter keys, AC 92.
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "F9") {
+      e.preventDefault();
+      if (remaining() > 0 || due() === 0) exact();
+    } else if (e.key === "Escape" && !shiftOpen()) app.back();
+  };
+  document.addEventListener("keydown", onKey);
+  onCleanup(() => document.removeEventListener("keydown", onKey));
 
   return (
     <section data-testid="tender-screen">
