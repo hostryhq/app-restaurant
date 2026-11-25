@@ -32,8 +32,12 @@ export type View =
   | { id: "menu" }
   | { id: "setup" };
 
-/** `target` (the record the action is on) and `reason` (a reason code id) are recorded on the approval and bound into its proof when the screen knows them. */
-export type ProofRequest = { permission: string; title: string; summary?: string; target?: string; reason?: string };
+/**
+ * What an approval is asked for. `intent`, `target` (`<entity>:<row id>` of the row the op inserts or sets), `reason` (a
+ * reason code id) and `values` (what the op will record for the intent's `proof.binds`) are recorded on the approval and
+ * bound into its action hash: the op that cites it must record exactly these (ADR-0014 A3.3).
+ */
+export type ProofRequest = { permission: string; title: string; summary?: string; intent?: string; target?: string; reason?: string; values?: Record<string, unknown> };
 export type ProofResult = { ok: true; approvalId?: string } | { ok: false };
 
 export type App = {
@@ -82,7 +86,7 @@ export function errorKey(e: unknown): string {
   return "error.generic";
 }
 
-const IDLE_SECONDS: Record<Runtime["deviceKind"], number> = { pos: 300, waiter: 120, kds: 0 };
+const IDLE_SECONDS: Record<Runtime["deviceKind"], number> = { pos: 300, waiter: 120, personal: 120, kds: 0 };
 
 export function createApp(rt: Runtime, t: Translator["t"], initial?: { session?: Session }): App {
   const [snap, setSnap] = createSignal<Snapshot>(rt.data.snapshot(), { equals: false });
@@ -91,7 +95,7 @@ export function createApp(rt: Runtime, t: Translator["t"], initial?: { session?:
   const [sync, setSync] = createSignal<SyncView>(rt.sync.status(), { equals: false });
   const [jobs, setJobs] = createSignal<QueueJob[]>(rt.fakes.hub.jobs(), { equals: false });
   const [late, setLate] = createSignal<readonly LateTicket[]>(rt.fakes.hub.lateTickets(), { equals: false });
-  const initialMode: Mode = rt.deviceKind === "kds" ? "kitchen" : rt.deviceKind === "waiter" ? "tables" : "counter";
+  const initialMode: Mode = rt.deviceKind === "kds" ? "kitchen" : rt.deviceKind === "waiter" || rt.deviceKind === "personal" ? "tables" : "counter";
   const [mode, setModeSig] = createSignal<Mode>(initialMode);
   const [stack, setStack] = createSignal<View[]>([defaultView(initialMode)]);
   const [proof, setProof] = createSignal<ProofRequest | undefined>(undefined);

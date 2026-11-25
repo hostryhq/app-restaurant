@@ -7,6 +7,7 @@ import {
   SyncRunner,
   approvalGrantSpec,
   createSyncPort,
+  deviceSessionDue,
   restaurantRegistry,
   sessionOpenSpec,
   type LocalStore,
@@ -19,7 +20,7 @@ import {
 import { AppData } from "./data/app-data";
 import { monotonicIds } from "./data/ids";
 import { PackIdentity } from "./data/auth/pack-identity";
-import { outletStreamOf, type DevicePack, type PinProver } from "./data/auth/pack";
+import { outletStreamOf, type DeviceKind, type DevicePack, type PinProver } from "./data/auth/pack";
 import { OpLog } from "./data/op-log";
 import type { IdentityPort, OpWriter, RecordSpec, SyncPort } from "./data/ports";
 import type { TradingCtx } from "./data/trading/ctx";
@@ -60,7 +61,7 @@ export type Runtime = {
   setSession(s: Session | undefined): void;
   session(): Session | undefined;
   /** Device role from activation: waiter handheld, pos counter or kds (RM-A10). */
-  deviceKind: "pos" | "waiter" | "kds";
+  deviceKind: DeviceKind;
   deviceId: string;
   /** The offline pack this runtime was built from: tenant, outlet, device, series and staff all come from it. */
   pack: DevicePack;
@@ -109,7 +110,8 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   const store = o.store ?? new InMemoryStore(pack.tenantId);
   const newId = monotonicIds(now);
 
-  const signer = o.signer ?? (await SoftwareSigner.generate(`k-${deviceId}`));
+  // The key id comes from the pack (`device.kid`): the gateway holds one key per device id under that kid (ADR-0014 A3.4).
+  const signer = o.signer ?? (await SoftwareSigner.generate(pack.kid));
   const verifier = o.upstream?.verifier ?? new KeyRing();
   if (signer instanceof SoftwareSigner && "add" in verifier && typeof verifier.add === "function") await verifier.add(deviceId, signer.kid, signer.publicB64);
   const engine = await SyncEngine.open({
@@ -120,6 +122,8 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
     signer,
     verifier,
     packVersion: pack.packV,
+    // The credential kind decides whether personal data reaches this device: a `kds` never receives it (ADR-0014 A3.1).
+    deviceKind: pack.deviceKind,
     now,
     newId,
   });
@@ -153,8 +157,18 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   const sync = createSyncPort(runner, engine);
   const engineWriter = new EngineOpWriter(engine, { streams: { brand: outletStream, tenant: outletStream } });
   const autoSync = o.autoSync ?? false;
+  // Holds the runtime once it exists: the writer re-opens a KDS device session through it.
+  const ref: { rt?: Runtime } = {};
+  const openBusinessDate = (): string | undefined => data.snapshot().list<{ business_date: string; status: string }>("business_day").find((d) => d.status === "open")?.business_date;
   const writer: OpWriter = {
     async record(spec: RecordSpec) {
+      // A KDS device session lasts one business day, at most 26 hours: the screen opens a new one on its first op after it
+      // sees a new open day (or after 26 hours), with no person involved (protocol "Device-session lifetime").
+      if (ref.rt && deviceKind === "kds" && spec.intent !== "session.open") {
+        const meta = current && deviceSessions.get(current);
+        const bd = openBusinessDate();
+        if (meta && deviceSessionDue(meta, { ms: now(), ...(bd !== undefined ? { businessDate: bd } : {}) })) await openDeviceSession(ref.rt);
+      }
       const op = await engineWriter.record(spec);
       if (autoSync && engine.status().online) void runner.syncNow();
       return op;
@@ -197,7 +211,21 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
         // The grant belongs to the session of the device in use (the requester's), under the approver's name.
         const sid = current?.sessionId ?? "system";
         await writer.record(
-          approvalGrantSpec({ approvalId: a.approvalId, approverId: a.approverId, requesterId: a.requesterId, permission: a.permission, target: a.target, reason: a.reason, actionHash: a.actionHash, sid, proof: a.proof, pinV: a.pinV }),
+          approvalGrantSpec({
+            approvalId: a.approvalId,
+            approverId: a.approverId,
+            requesterId: a.requesterId,
+            permission: a.permission,
+            intent: a.intent,
+            target: a.target,
+            reason: a.reason,
+            actionHash: a.actionHash,
+            sid,
+            proof: a.proof,
+            pinV: a.pinV,
+            at: a.at,
+            self: a.self,
+          }),
         );
       },
     },
@@ -209,7 +237,7 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
   const ctx: TradingCtx = { data, session: () => current, now, newId, print: fakes.hub, outletId: pack.outletId, deviceCode, manualBookCodes: pack.manualBooks, nameOf: (id) => names.get(id) ?? id };
 
   const links = o.upstream?.links;
-  return {
+  const rt: Runtime = {
     data,
     writer,
     engine,
@@ -241,11 +269,18 @@ export async function createRuntime(o: RuntimeOptions): Promise<Runtime> {
     pack,
     now,
   };
+  ref.rt = rt;
+  return rt;
 }
+
+/** When and under which business day each device session was opened: the KDS re-opens at a new day or after 26 hours. */
+const deviceSessions = new WeakMap<Session, { openedAtMs: number; businessDate?: string }>();
+let sidSeq = 0;
 
 /**
  * Device session of a KDS screen: no member, no PIN, only the kitchen's permissions (AC 191). The session id carries the
- * device id, so one origin never reuses another device's `sid` (identity refuses a sid seen with another device).
+ * device id, so one origin never reuses another device's `sid` (identity refuses a sid seen with another device). It lasts
+ * one business day and at most 26 hours (protocol "Device-session lifetime"), then the screen opens a new one.
  */
 export function deviceSession(rt: Runtime, sid = `s-${rt.pack.deviceId}-device`): Session {
   return {
@@ -255,6 +290,7 @@ export function deviceSession(rt: Runtime, sid = `s-${rt.pack.deviceId}-device`)
     sessionId: sid,
     kind: "shared",
     grants: [{ outlets: [rt.pack.outletId], perms: ["kds.bump", "menu.availability.set"] }],
+    // The Session never lapses by itself: the 26 hour rule is the writer's (it opens a new session before the next op), and a lapsed one here would refuse the very op that re-opens it.
     expiresAt: new Date(rt.now() + 365 * 86_400_000).toISOString(),
     offline: true,
   };
@@ -266,7 +302,9 @@ export function deviceSession(rt: Runtime, sid = `s-${rt.pack.deviceId}-device`)
  * device (finding F15). A fresh session id on every start.
  */
 export async function openDeviceSession(rt: Runtime): Promise<Session> {
-  const s = deviceSession(rt, `s-${rt.pack.deviceId}-${rt.now().toString(36)}`);
+  const s = deviceSession(rt, `s-${rt.pack.deviceId}-${rt.now().toString(36)}-${(++sidSeq).toString(36)}`);
+  const day = rt.data.snapshot().list<{ business_date: string; status: string }>("business_day").find((d) => d.status === "open")?.business_date;
+  deviceSessions.set(s, { openedAtMs: rt.now(), ...(day !== undefined ? { businessDate: day } : {}) });
   rt.setSession(s);
   await rt.writer.record(sessionOpenSpec({ sid: s.sessionId, actor: s.memberId, type: "device" }));
   return s;

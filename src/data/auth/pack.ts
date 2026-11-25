@@ -8,7 +8,8 @@ import type { SeriesGrant } from "@hostry/client-core";
  * reads the wire form.
  */
 
-export type DeviceKind = "pos" | "waiter" | "kds";
+/** The credential kinds a device of this app can have (api-specs `Credential.kind`; a `hub` is not an app). `kds` never receives customer details. */
+export type DeviceKind = "pos" | "waiter" | "personal" | "kds";
 
 export type PackMember = {
   memberId: string;
@@ -26,6 +27,8 @@ export type DevicePack = {
   outletId: string;
   deviceId: string;
   deviceKind: DeviceKind;
+  /** Key id of this device's own credential (pack `device.kid`): the seals and endorsements it makes name it (ADR-0014 A3.4). */
+  kid: string;
   /** Series code of this device's bills ("A07"); absent on a device that never bills. */
   deviceCode: string;
   /** Pack version, a JSON integer >= 1 (ADR-0005 A3.1); every device-origin op carries it. */
@@ -52,8 +55,8 @@ const isStr = (v: unknown): v is string => typeof v === "string" && v.length > 0
 export function packFromJson(raw: unknown): DevicePack {
   const p = raw as Partial<DevicePack> | null;
   if (!p || typeof p !== "object") throw new PackError("not an object");
-  for (const k of ["tenantId", "brandId", "outletId", "deviceId", "deviceCode", "expiresAt"] as const) if (!isStr(p[k])) throw new PackError(`missing ${k}`);
-  if (p.deviceKind !== "pos" && p.deviceKind !== "waiter" && p.deviceKind !== "kds") throw new PackError("bad deviceKind");
+  for (const k of ["tenantId", "brandId", "outletId", "deviceId", "deviceCode", "expiresAt", "kid"] as const) if (!isStr(p[k])) throw new PackError(`missing ${k}`);
+  if (p.deviceKind !== "pos" && p.deviceKind !== "waiter" && p.deviceKind !== "personal" && p.deviceKind !== "kds") throw new PackError("bad deviceKind");
   if (!Number.isInteger(p.packV) || (p.packV as number) < 1) throw new PackError("packV must be an integer >= 1");
   if (!Array.isArray(p.members) || !Array.isArray(p.series)) throw new PackError("members and series are required");
   p.manualBooks = Array.isArray(p.manualBooks) ? p.manualBooks : [];

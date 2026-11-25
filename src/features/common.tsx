@@ -34,13 +34,16 @@ export function ProofHost(): JSX.Element {
     const req = app.proof();
     const me = app.session()?.memberId;
     if (!req || !me) return;
+    const about = { ...(req.intent ? { intent: req.intent } : {}), ...(req.target ? { target: req.target } : {}), ...(req.reason ? { reason: req.reason } : {}), ...(req.values ? { values: req.values } : {}) };
     if (ownPin()) {
-      if (await app.rt.identity.confirmOwnPin(me, r.pin)) app.resolveProof({ ok: true });
+      // Own PIN on an action the member may do: an `approval.self_confirm` the op cites (never a manager's approval).
+      const own = await app.rt.identity.confirmOwnPin(me, r.pin, req.permission, about);
+      if (own.ok) app.resolveProof({ ok: true, approvalId: own.approvalId });
       else setError(app.t("login.wrong"));
       return;
     }
     if (!r.approverId) return;
-    const res = await app.rt.identity.approve(r.approverId, r.pin, req.permission, me, { ...(req.target ? { target: req.target } : {}), ...(req.reason ? { reason: req.reason } : {}) });
+    const res = await app.rt.identity.approve(r.approverId, r.pin, req.permission, me, about);
     if (res.ok) app.resolveProof({ ok: true, approvalId: res.approvalId });
     else setError(app.t(res.reason === "same" ? "approval.same" : res.reason === "not_allowed" ? "error.permission" : "login.wrong"));
   };

@@ -1,4 +1,4 @@
-import type { SeriesGrant } from "@hostry/client-core";
+import { approvalProofMessage, sessionProofMessage, type SeriesGrant } from "@hostry/client-core";
 import type { ApprovalProofInput, DeviceKind, DevicePack, PackMember, PinProver, SessionProofInput } from "../data/auth/pack";
 import { DEMO_OUTLET_ID, DEMO_TENANT_ID } from "./demo-outlet";
 
@@ -95,6 +95,7 @@ export function demoPack(o: DemoPackOptions = {}): { pack: DevicePack; prover: D
     outletId: o.outletId ?? DEMO_OUTLET_ID,
     deviceId: o.deviceId ?? `dev-${deviceKind}-${deviceCode}`,
     deviceKind,
+    kid: `k-${o.deviceId ?? `dev-${deviceKind}-${deviceCode}`}`,
     deviceCode,
     packV: o.packV ?? 1,
     expiresAt: o.expiresAt ?? new Date(now() + 7 * 86_400_000).toISOString(),
@@ -114,8 +115,11 @@ async function hmac(pin: string, memberId: string, pinV: number, msg: string): P
   return `d1:${hex(await crypto.subtle.sign("HMAC", key, enc.encode(msg)))}`;
 }
 
-const sessionMsg = (i: Omit<SessionProofInput, "pin">): string => ["session", i.sid, i.deviceId, i.memberId, i.packV, i.pinV, i.openedAt].join("|");
-const approvalMsg = (i: Omit<ApprovalProofInput, "pin">): string => ["approval", i.approvalId, i.permission, i.requesterId, i.approverId, i.actionHash, i.target, i.reason, i.deviceId, i.packV, i.pinV, i.at].join("|");
+// The message bytes are the contract's (api-specs sync/protocol-v1.md, Proof messages): client-core builds them, so the
+// fixture and the identity service sign the same text. Only the key derivation and the output encoding are fixture.
+const sessionMsg = (i: Omit<SessionProofInput, "pin">): string => sessionProofMessage({ sessionId: i.sid, deviceId: i.deviceId, memberId: i.memberId, packV: i.packV, pinV: i.pinV, openedAt: i.openedAt });
+const approvalMsg = (i: Omit<ApprovalProofInput, "pin">): string =>
+  approvalProofMessage({ actionHash: i.actionHash, deviceId: i.deviceId, memberId: i.approverId, packV: i.packV, pinV: i.pinV, approvalId: i.approvalId, permission: i.permission, target: i.target, requesterId: i.requesterId, approvedAt: i.at, reason: i.reason });
 
 /** Fixture prover: checks the PIN against the demo list and makes an HMAC proof. `verify*` stands in for the identity service (tests). */
 export class DemoProver implements PinProver {

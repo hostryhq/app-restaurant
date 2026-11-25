@@ -145,13 +145,13 @@ export async function mergeBills(ctx: TradingCtx, keepId: string, dropId: string
 }
 
 /** Cancel an unbilled check (bill.cancel): reason and a manager's approval; lines already sent stay in the kitchen record. */
-export async function cancelCheck(ctx: TradingCtx, checkId: string, reasonCodeId: string, approvalId?: string): Promise<void> {
+export async function cancelCheck(ctx: TradingCtx, checkId: string, reasonCodeId: string, approvalId?: string, cancelId?: string): Promise<void> {
   need(ctx, "bill.cancel", approvalId);
   const snap = ctx.data.snapshot();
   const c = snap.get<Check>("check", checkId);
   if (!c || c.status !== "open") throw new TradingError("not_open", checkId);
   const presented = snap.list("check_present").some((p) => p.check_id === checkId);
-  await ctx.data.write({ intent: "bill.cancel", ...(approvalId ? { approval: approvalId } : {}), build: (b) => [{ e: "check_cancel", id: b.newId(), k: "insert", f: { check_id: checkId, reason_code_id: reasonCodeId, ...(approvalId ? { approval_id: approvalId } : {}), presented } }] });
+  await ctx.data.write({ intent: "bill.cancel", ...(approvalId ? { approval: approvalId } : {}), build: (b) => [{ e: "check_cancel", id: cancelId ?? b.newId(), k: "insert", f: { check_id: checkId, reason_code_id: reasonCodeId, ...(approvalId ? { approval_id: approvalId } : {}), presented } }] });
 }
 
 /** Sold out / available at this outlet (RS29, menu.availability.set). The kitchen and counter hold the permission. */

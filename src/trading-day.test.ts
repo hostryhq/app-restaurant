@@ -72,7 +72,12 @@ describe("trading day: three devices, offline all day, a blackout, then reconnec
     const due1 = dueOf(c, t1.checkId);
     const b1 = await T.settle(c.rt.ctx, t1.checkId, { payments: [{ tender: "cash", amount_paise: Math.floor(due1 / 2) }, { tender: "upi", amount_paise: due1 - Math.floor(due1 / 2) }] });
     expect(b1.number).toBe("A07/2627/000001");
-    const ap = await c.rt.identity.approve("m-meena", "3333", "bill.discount.over_limit", "m-asha");
+    const ap = await c.rt.identity.approve("m-meena", "3333", "bill.discount.over_limit", "m-asha", {
+      intent: "bill.discount.over_limit",
+      target: `check:${t2.checkId}`,
+      reason: "rc-disc-complaint",
+      values: { discount_kind: "percent", discount_value: 1500 },
+    });
     if (!ap.ok) throw new Error("approval");
     await T.applyDiscount(c.rt.ctx, { checkId: t2.checkId, kind: "percent", value: 1500, reasonCodeId: "rc-disc-complaint", approvalId: ap.approvalId });
     const b2 = await T.settle(c.rt.ctx, t2.checkId, { payments: [{ tender: "card", amount_paise: dueOf(c, t2.checkId) }] });
@@ -191,7 +196,15 @@ describe("trading day: three devices, offline all day, a blackout, then reconnec
     }
     // The re-bill is whole everywhere: its credit note cites the original, its new bill replaces it.
     const rbBill = rows<BillRow>(kds.rt, "bill").find((b) => b.number === "A07/2627/000004")!;
-    expect(rbBill).toMatchObject({ replaces_bill_id: b1.billId, customer_gstin: "33ABCDE1234F1Z5" });
+    expect(rbBill).toMatchObject({ replaces_bill_id: b1.billId });
+    // ADR-0014 A3.1: the buyer's GSTIN reaches the counter and the captain's tablet (a second till can reprint the B2B bill with no
+    // internet) and never the kitchen screen, which holds only its commitment; A3.2: so the plain hash is the same on all three.
+    for (const w of [counter, captain]) expect(rows<BillRow>(w.rt, "bill").find((b) => b.number === "A07/2627/000004")).toMatchObject({ customer_gstin: "33ABCDE1234F1Z5" });
+    expect(rbBill.customer_gstin).toBeUndefined();
+    expect(await kds.rt.store.get("bill", rbBill.id)).toHaveProperty(["~c:customer_gstin"]);
+    const plain = await Promise.all(ws.map((w) => w.rt.engine.stateHash()));
+    expect(new Set(plain).size).toBe(1);
+    for (const w of [counter, captain]) expect(await w.rt.engine.piiIncomplete()).toEqual([]);
     // The blackout KOTs reached the KDS, flagged as given by hand; the stale one never printed on its own.
     expect(rows(kds.rt, "kot_handover")).toHaveLength(1);
 

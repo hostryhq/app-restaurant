@@ -186,9 +186,19 @@ export function TableActions(props: { open: boolean; onClose: () => void; checkI
           data-testid="cancelbill-confirm"
           disabled={!reason()}
           onClick={async () => {
-            const proof = await app.askProof({ permission: "bill.cancel", title: app.t("actions.cancelbill") });
+            // The approval binds the cancellation row (its id is chosen now and used by the op), the check and the reason.
+            const r = reason() as string;
+            const cancelId = app.rt.ctx.newId();
+            const proof = await app.askProof({
+              permission: "bill.cancel",
+              intent: "bill.cancel",
+              target: `check_cancel:${cancelId}`,
+              reason: r,
+              values: { check_id: props.checkId, reason_code_id: r },
+              title: app.t("actions.cancelbill"),
+            });
             if (!proof.ok) return;
-            done(await app.run(() => cancelCheck(app.rt.ctx, props.checkId, reason() as string, proof.approvalId)));
+            done(await app.run(() => cancelCheck(app.rt.ctx, props.checkId, r, proof.approvalId, cancelId)));
           }}
         >
           {app.t("actions.cancelbill")}

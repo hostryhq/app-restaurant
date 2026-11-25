@@ -23,7 +23,17 @@ export type ApproveResult =
  * screen can show the delay and lock states, and `asPinLogin` adapts it to the throwing form the core interface has.
  */
 /** The record the approval is for and the reason, when the screen knows them: bound into the approval proof and recorded on `approval.grant`. */
-export type ApprovalAbout = { target?: string; reason?: string };
+export type ApprovalAbout = {
+  /** The intent of the op that will cite the approval; when absent, the override intent of the permission. The action hash binds it. */
+  intent?: string;
+  /** `<entity>:<row id>` of the row the citing op inserts or sets. The action hash binds it. */
+  target?: string;
+  reason?: string;
+  /** The values the citing op will record for the intent's `proof.binds` (ADR-0014 A3.3). An approval for another amount is `mismatch`. */
+  values?: Record<string, unknown>;
+};
+
+export type OwnPinResult = { ok: true; approvalId: string } | { ok: false; reason: "wrong" | "locked" | "not_allowed" };
 
 export interface IdentityPort extends Pick<PinLogin, "signOut"> {
   members(): Promise<Member[]>;
@@ -32,8 +42,11 @@ export interface IdentityPort extends Pick<PinLogin, "signOut"> {
   approve(approverId: string, pin: string, permission: string, requesterId: string, about?: ApprovalAbout): Promise<ApproveResult>;
   /** Members who hold `permission` and are not `exceptMemberId`. */
   approversFor(permission: string, exceptMemberId: string): Promise<Member[]>;
-  /** Own-PIN re-entry for an action proof in a PIN session. */
-  confirmOwnPin(memberId: string, pin: string): Promise<boolean>;
+  /**
+   * Own-PIN re-entry for an action the member may do themselves (ADR-0005 s8): records `approval.self_confirm` (requester =
+   * approver = the member) and returns its id for the citing op. It never stands in for a manager's approval.
+   */
+  confirmOwnPin(memberId: string, pin: string, permission: string, about?: ApprovalAbout): Promise<OwnPinResult>;
   /** When the offline pack expires, RFC 3339 UTC. */
   packExpiresAt(): string;
 }

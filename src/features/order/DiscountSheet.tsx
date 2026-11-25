@@ -50,7 +50,16 @@ export function DiscountSheet(props: { checkId: string; open: boolean; onClose: 
     if (v === undefined || !r) return;
     let approvalId: string | undefined;
     if (decision() === "ask_manager" || decision() === "own_pin" || decision() === "comp") {
-      const proof = await app.askProof({ permission: "bill.discount.over_limit", title: app.t("discount.title"), summary: app.t("discount.summary", { value: text() }) });
+      // The approval binds this discount: the check it is on, its kind and its value. Another amount needs another approval.
+      const proof = await app.askProof({
+        permission: "bill.discount.over_limit",
+        intent: "bill.discount.over_limit",
+        target: `check:${props.checkId}`,
+        reason: r,
+        values: { discount_kind: kind(), discount_value: v },
+        title: app.t("discount.title"),
+        summary: app.t("discount.summary", { value: text() }),
+      });
       if (!proof.ok) return;
       approvalId = proof.approvalId;
     }
