@@ -77,9 +77,26 @@ export type Station = Base & { code: string; name: string; output: "printer" | "
 export type Shift = Base & { business_date: string; opening_float_paise: number; status: "open" | "closed"; opened_by: string; opened_at: string };
 export type ShiftClose = Base & { shift_id: string; counted_paise: number; expected_paise: number; variance_paise: number; force_closed?: boolean };
 export type BusinessDay = Base & { business_date: string; status: "open" | "closed" };
-export type DayClose = Base & { business_day_id: string; z_number: string; total_paise: number; bill_count: number; cutoff: string };
+export type DayClose = Base & { business_day_id: string; z_number: string; total_paise: number; bill_count: number; cutoff: string; series_ranges_json?: string };
 export type CashEvent = Base & { kind: "cash_in" | "cash_out" | "owner_cash_drop" | "no_sale"; amount_paise: number; shift_id?: string; business_date: string; note?: string };
 export type ReasonCode = Base & { purpose: string; label_key: string; active: boolean };
+export type BusinessDayRevision = Base & {
+  business_day_id: string;
+  revision: number;
+  cause?: string;
+  display_number: string;
+  gross_paise: number;
+  discount_paise: number;
+  net_paise: number;
+  service_charge_paise: number;
+  cgst_paise: number;
+  sgst_paise: number;
+  round_off_paise: number;
+  total_paise: number;
+  bill_count: number;
+  credit_note_count: number;
+  tenders_json?: string;
+};
 export type OpRow = Base & { seq: number; intent: string; at: string; actor: string; delivery: "local" | "at_hub" | "in_cloud"; origin: string; own: boolean; muts: Array<{ e: string; id: string; k: string }>; approval?: string; doc?: { type: string; number: string } };
 
 export type { Item, Category } from "@hostry/client-core";

@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, ChecklistPanel, formatMoney, InlineAlert, toasts, type ChecklistItem } from "@hostry/ui-kit";
 import type { Check, Shift } from "../../domain/rows";
-import { carryOver, closeDay, closeShift, dayBlockersNow, openDayOf, paidOf } from "../../data/trading";
+import { carryOver, closeDay, closeShift, dayBlockersNow, lateDays, openDayOf, paidOf, printRevision } from "../../data/trading";
 import { useApp } from "../app-state";
 import { BackButton } from "../common";
 import { tableOfSeating } from "../selectors";
@@ -31,6 +31,8 @@ export function DayClose(): JSX.Element {
   );
   const unpaid = createMemo(() => app.snap().list<{ id: string; total_paise: number }>("bill").filter((b) => b.total_paise > paidOf((e) => app.snap().list(e), b.id)).length);
 
+  const late = createMemo(() => lateDays((e) => app.snap().list(e)));
+
   const close = () => void app.run(() => closeDay(app.rt.ctx), (r) => (setZ(r), toasts.show(app.t("dayclose.done", { z: r.zNumber }))));
   const forceClose = (s: Shift) => void app.run(() => closeShift(app.rt.ctx, s.id, 0, { force: true }));
 
@@ -58,6 +60,28 @@ export function DayClose(): JSX.Element {
         <Button data-testid="dayclose-submit" disabled={blockers().length > 0} onClick={close}>
           {app.t("dayclose.submit")}
         </Button>
+      </Show>
+      <Show when={late().length > 0}>
+        <h2>{app.t("dayclose.late.title")}</h2>
+        <For each={late()}>
+          {(d) => (
+            <div data-testid={`late-day-${d.date}`}>
+              <InlineAlert kind="info" data-testid={`late-docs-${d.date}`}>
+                {app.t("dayclose.late", { n: d.billNumbers.length + d.noteNumbers.length, date: d.date, device: d.devices.join(", ") })}
+              </InlineAlert>
+              <For each={d.revisions}>
+                {(r) => (
+                  <p data-testid={`revision-${r.revision}`}>
+                    {app.t("dayclose.revision", { n: r.revision, number: r.display_number })}{" "}
+                    <Button variant="secondary" data-testid={`revision-print-${r.revision}`} onClick={() => void app.run(() => printRevision(app.rt.ctx, r.id))}>
+                      {app.t("dayclose.revision.print")}
+                    </Button>
+                  </p>
+                )}
+              </For>
+            </div>
+          )}
+        </For>
       </Show>
       <Show when={z()}>
         <p data-testid="dayclose-z">

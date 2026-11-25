@@ -1,9 +1,9 @@
 import { createMemo, createSignal, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import type { BillLineRow, RefundTender } from "@hostry/client-core";
-import { Button, Input, LineSelectList, ReasonChips, SegmentedControl, toasts } from "@hostry/ui-kit";
+import { AmountField, Button, formatMoney, Input, LineSelectList, ReasonChips, SegmentedControl, toasts } from "@hostry/ui-kit";
 import type { ReasonCode } from "../../domain/rows";
-import { creditNote, loadOriginal, previouslyCredited, rebillBill, validGstin } from "../../data/trading";
+import { creditAndReopen, creditNote, loadOriginal, paidOf, paymentsOf, previouslyCredited, rebillBill, refundPayment, validGstin } from "../../data/trading";
 import { useApp } from "../app-state";
 import { BackButton } from "../common";
 
@@ -13,7 +13,8 @@ import { BackButton } from "../common";
  */
 export function Credit(props: { billId: string }): JSX.Element {
   const app = useApp();
-  const [mode, setMode] = createSignal<"credit" | "rebill">(app.can("bill.credit_note.create") ? "credit" : "rebill");
+  type Mode = "credit" | "rebill" | "reopen" | "refund";
+  const [mode, setMode] = createSignal<Mode>(app.can("bill.credit_note.create") ? "credit" : app.can("bill.rebill") ? "rebill" : "refund");
   const [sel, setSel] = createSignal<Record<string, number>>({});
   const [reason, setReason] = createSignal<string | undefined>(undefined);
   const [refund, setRefund] = createSignal<RefundTender>("cash");
@@ -22,16 +23,41 @@ export function Credit(props: { billId: string }): JSX.Element {
   const prev = createMemo(() => previouslyCredited((e) => app.snap().list(e), props.billId));
   const selectable = createMemo(() => original().lines.map((l: BillLineRow) => ({ id: l.id, label: l.item_name, qty: (l.qty_milli - (prev()[l.id] ?? 0)) / 1000 })).filter((l) => l.qty > 0));
   const reasons = createMemo(() => app.snap().list<ReasonCode>("reason_code").filter((r) => r.purpose === "credit_note" && r.active).map((r) => ({ id: r.id, label: app.t(r.label_key) })));
+  const payments = createMemo(() => paymentsOf((e) => app.snap().list(e), props.billId));
+  const refunds = createMemo(() => app.snap().list<{ payment_id?: string; amount_paise: number }>("refund"));
+  const left = (paymentId: string) => (payments().find((p) => p.id === paymentId)?.amount_paise ?? 0) - refunds().filter((r) => r.payment_id === paymentId).reduce((s, r) => s + r.amount_paise, 0);
+  const [payment, setPayment] = createSignal<string | undefined>(undefined);
+  const [amount, setAmount] = createSignal<number | undefined>(undefined);
+  const refundPaise = () => Math.min(amount() ?? left(payment() ?? ""), left(payment() ?? ""));
+  const unpaid = createMemo(() => paidOf((e) => app.snap().list(e), props.billId) === 0);
   const gstinBad = () => gstin().trim() !== "" && !validGstin(gstin());
 
   const submit = async () => {
     const r = reason();
     if (!r) return;
-    const perm = mode() === "credit" ? "bill.credit_note.create" : "bill.rebill";
-    const proof = await app.askProof({ permission: perm, title: app.t(mode() === "credit" ? "credit.title" : "credit.rebill") });
+    const perm = { credit: "bill.credit_note.create", rebill: "bill.rebill", reopen: "bill.credit_note.create", refund: "payment.refund" }[mode()];
+    const proof = await app.askProof({ permission: perm, title: app.t({ credit: "credit.title", rebill: "credit.rebill", reopen: "credit.reopen", refund: "credit.refund.mode" }[mode()]) });
     if (!proof.ok) return;
     const approval = proof.approvalId ? { approvalId: proof.approvalId } : {};
-    if (mode() === "credit") {
+    if (mode() === "refund") {
+      const p = payment();
+      if (!p) return;
+      await app.run(
+        () => refundPayment(app.rt.ctx, { paymentId: p, amountPaise: refundPaise(), reasonCodeId: r, ...approval }),
+        () => {
+          toasts.show(app.t("credit.refunded", { amount: formatMoney(refundPaise()) }));
+          app.back();
+        },
+      );
+    } else if (mode() === "reopen") {
+      await app.run(
+        () => creditAndReopen(app.rt.ctx, { billId: props.billId, reasonCodeId: r, ...approval }),
+        (n) => {
+          toasts.show(app.t("credit.reopened", { credit: n.credit }));
+          app.back();
+        },
+      );
+    } else if (mode() === "credit") {
       const lines = Object.keys(sel()).length ? Object.entries(sel()).map(([id, q]) => ({ bill_line_id: id, qty_milli: q * 1000 })) : undefined;
       await app.run(
         () => creditNote(app.rt.ctx, { billId: props.billId, ...(lines ? { lines } : {}), reasonCodeId: r, refundTender: refund(), ...approval }),
@@ -60,9 +86,11 @@ export function Credit(props: { billId: string }): JSX.Element {
         options={[
           ...(app.can("bill.credit_note.create") ? [{ id: "credit", label: app.t("credit.title"), "data-testid": "mode-credit" }] : []),
           ...(app.can("bill.rebill") ? [{ id: "rebill", label: app.t("credit.rebill"), "data-testid": "mode-rebill" }] : []),
+          ...(app.can("bill.credit_note.create") && unpaid() ? [{ id: "reopen", label: app.t("credit.reopen"), "data-testid": "mode-reopen" }] : []),
+          ...(app.can("payment.refund") && payments().length > 0 ? [{ id: "refund", label: app.t("credit.refund.mode"), "data-testid": "mode-refund" }] : []),
         ]}
         selected={mode()}
-        onSelect={(m) => setMode(m as "credit" | "rebill")}
+        onSelect={(m) => setMode(m as Mode)}
       />
       <Show when={mode() === "credit"}>
         <LineSelectList label={app.t("credit.lines")} lines={selectable()} selection={sel()} onChange={setSel} />
@@ -77,9 +105,24 @@ export function Credit(props: { billId: string }): JSX.Element {
       <Show when={mode() === "rebill"}>
         <Input label={app.t("tender.gstin")} value={gstin()} data-testid="rebill-gstin" {...(gstinBad() ? { error: app.t("error.bad_gstin") } : {})} onInput={(e) => setGstin(e.currentTarget.value)} />
       </Show>
+      <Show when={mode() === "reopen"}>
+        <p data-testid="reopen-help">{app.t("credit.reopen.help")}</p>
+      </Show>
+      <Show when={mode() === "refund"}>
+        <SegmentedControl
+          label={app.t("credit.refund.payment")}
+          options={payments().map((p) => ({ id: p.id, label: `${p.tender} ${formatMoney(left(p.id))}`, "data-testid": `refund-pay-${p.id}` }))}
+          selected={payment()}
+          onSelect={(id) => (setPayment(id), setAmount(undefined))}
+        />
+        <Show when={payment()}>
+          <AmountField label={app.t("credit.refund.amount")} valuePaise={refundPaise()} onChange={(v) => setAmount(v)} data-testid="refund-amount" />
+        </Show>
+        <p data-testid="refund-usecredit">{app.t("credit.refund.usecredit")}</p>
+      </Show>
       <ReasonChips label={app.t("credit.reason")} reasons={reasons()} selected={reason()} onSelect={setReason} />
-      <Button data-testid="credit-submit" disabled={!reason() || (mode() === "rebill" && gstinBad())} onClick={() => void submit()}>
-        {mode() === "credit" ? app.t("credit.submit") : app.t("credit.rebill.submit")}
+      <Button data-testid="credit-submit" disabled={!reason() || (mode() === "rebill" && gstinBad()) || (mode() === "refund" && (!payment() || refundPaise() < 1))} onClick={() => void submit()}>
+        {app.t({ credit: "credit.submit", rebill: "credit.rebill.submit", reopen: "credit.reopen.submit", refund: "credit.refund.submit" }[mode()])}
       </Button>
     </section>
   );

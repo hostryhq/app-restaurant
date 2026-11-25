@@ -97,3 +97,40 @@ export function dayCloseOverdue(openDate: string | undefined, nowMs: number, cut
   const cutoff = Date.parse(`${openDate}T00:00:00+05:30`) + 86_400_000 + cutoffMinutes * 60_000;
   return nowMs > cutoff;
 }
+
+/** Highest running number per series code among the given documents (what a Z-report covers of each series). */
+export function seriesRangesOf(docs: ReadonlyArray<{ number: string }>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of docs) {
+    const [code, , running] = d.number.split("/");
+    if (!code || running === undefined) continue;
+    out[code] = Math.max(out[code] ?? 0, Number(running));
+  }
+  return out;
+}
+
+/**
+ * Documents of a closed business date that the Z-report did not cover (RS21, ADR-0014 A1.1): bills and credit notes an
+ * offline device made on that date and sent after the day was closed. A document is late when its series is missing from the
+ * ranges the Z-report recorded, or its running number is above the recorded top of its series. The date is never reopened.
+ */
+export function lateDocuments<B extends { number: string; business_date: string }, N extends { number: string; business_date: string }>(
+  date: string,
+  ranges: Readonly<Record<string, number>>,
+  bills: readonly B[],
+  notes: readonly N[],
+): { bills: B[]; notes: N[] } {
+  const late = (d: { number: string; business_date: string }): boolean => {
+    if (d.business_date !== date) return false;
+    const [code, , running] = d.number.split("/");
+    const top = code ? ranges[code] : undefined;
+    return top === undefined || Number(running) > top;
+  };
+  return { bills: bills.filter(late), notes: notes.filter(late) };
+}
+
+/** Sum of refunds of one business date (RS19 payment.refund); refunds are not part of bill or credit-note totals. */
+export function refundTotal(date: string, refunds: ReadonlyArray<{ business_date: string; amount_paise: number }>): { count: number; total: number } {
+  const rs = refunds.filter((r) => r.business_date === date);
+  return { count: rs.length, total: rs.reduce((s, r) => s + r.amount_paise, 0) };
+}

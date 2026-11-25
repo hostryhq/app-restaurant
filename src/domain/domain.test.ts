@@ -85,13 +85,17 @@ describe("KDS tickets (RS22)", () => {
 
   it("shows the station's tickets oldest first, moves done ones to the done strip and keeps cancel banners until acknowledged", () => {
     const kots = [kot("k2", "2026-11-24T07:50:00Z"), kot("k1", "2026-11-24T07:40:00Z"), kot("k3", "2026-11-24T07:55:00Z", { station_code: "BAR" }), kot("k4", "2026-11-24T07:56:00Z", { kind: "cancel" })];
-    const lines = [line("a", "k1", "ready"), line("b", "k2", "new"), line("c", "k3", "new"), line("d", "k4", "ready")];
-    const v = kdsTickets({ kots, lines, handovers: [], acked: new Set(), stationCodes: ["KITCHEN"], nowMs: now });
+    const lines = [line("a", "k1", "ready"), line("b", "k2", "new"), line("c", "k3", "new")];
+    // a cancel ticket has no kot_line rows: its items are the cancels that name it
+    const cancels = [{ id: "cx", tenant_id: "t", order_line_id: "ol-d", kind: "cancel" as const, qty_milli: 1000, kot_id: "k4" }];
+    const orderLines = [{ id: "ol-d", kitchen_name: "TEA" }] as never;
+    const v = kdsTickets({ kots, lines, cancels, orderLines, handovers: [], acked: new Set(), stationCodes: ["KITCHEN"], nowMs: now });
+    expect(v.active[1]?.lines.map((l) => [l.name, l.qty_milli])).toEqual([["TEA", 1000]]);
     expect(v.active.map((t) => t.kot.id)).toEqual(["k2", "k4"]);
     expect(v.active[0]?.minutes).toBe(10);
     expect(v.active[1]?.alert).toBe("cancelled");
     expect(v.done.map((t) => t.kot.id)).toEqual(["k1"]);
-    const acked = kdsTickets({ kots, lines, handovers: [], acked: new Set(["k4"]), stationCodes: ["KITCHEN"], nowMs: now });
+    const acked = kdsTickets({ kots, lines, cancels, orderLines, handovers: [], acked: new Set(["k4"]), stationCodes: ["KITCHEN"], nowMs: now });
     expect(acked.active.map((t) => t.kot.id)).toEqual(["k2"]);
     expect(acked.done.map((t) => t.kot.id)).toEqual(["k4", "k1"]); // newest first
   });

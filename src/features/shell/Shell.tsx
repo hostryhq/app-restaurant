@@ -2,6 +2,7 @@ import { createMemo, For, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { AppShell, Banner, Button, ModeBar, PrinterStatus, SyncStatus, ToastRegion, type ModeItem } from "@hostry/ui-kit";
 import { dayCloseOverdue } from "../../domain/shift-day";
+import { lateDays } from "../../data/trading";
 import type { BusinessDay } from "../../domain/rows";
 import { settingsFrom } from "../../data/context";
 import { useApp, type Mode } from "../app-state";
@@ -25,6 +26,8 @@ export function Shell(props: { children?: JSX.Element }): JSX.Element {
     if (app.can("day.close") && dayCloseOverdue(day?.business_date, app.nowMs(), settingsFrom((e) => app.snap().list(e)).day_cutoff_minutes)) {
       out.push({ id: "day", kind: "info", text: app.t("shell.day.close"), action: { label: app.t("shell.day.close.action"), run: () => app.go({ id: "dayclose" }) } });
     }
+    const lateDocs = app.can("day.close") ? lateDays((e) => app.snap().list(e)).reduce((n, d) => n + d.billNumbers.length + d.noteNumbers.length, 0) : 0;
+    if (lateDocs > 0) out.push({ id: "docs-late", kind: "info", text: app.t("shell.docs.late", { n: lateDocs }), action: { label: app.t("shell.docs.late.open"), run: () => app.go({ id: "dayclose" }) } });
     const packMs = Date.parse(app.rt.identity.packExpiresAt()) - app.nowMs();
     if (packMs < 48 * 3_600_000) out.push({ id: "pack", kind: "warning", text: app.t("shell.pack.expiring", { date: app.rt.identity.packExpiresAt().slice(0, 10) }) });
     if (app.late().length > 0 && !out.some((n) => n.id === "blackout")) {

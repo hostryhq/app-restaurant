@@ -42,6 +42,7 @@ export const ENTITIES = [
   "business_day",
   "day_open",
   "day_close",
+  "business_day_revision",
   "cash_event",
   "reason_code",
   "tender_kind",

@@ -36,7 +36,7 @@ export function kdsTickets(i: { kots: readonly Kot[]; lines: readonly KotLine[];
         kot,
         lines,
         minutes: minutesSince(kot.created_at, i.nowMs),
-        done: isRecall ? i.acked.has(kot.id) : lines.length > 0 && lines.every((l) => l.status === "ready" || l.status === "served"),
+        done: isRecall || kot.kind === "cancel" || kot.kind === "moved" ? i.acked.has(kot.id) : lines.length > 0 && lines.every((l) => l.status === "ready" || l.status === "served"),
         alreadyGiven: i.handovers.some((h) => h.kot_id === kot.id),
         alert: i.acked.has(kot.id) ? undefined : kot.kind === "cancel" ? "cancelled" : kot.kind === "moved" ? "moved" : undefined,
         recall: kot.kind === "recall",

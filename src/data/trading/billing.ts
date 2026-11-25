@@ -37,9 +37,9 @@ import type { Check, CheckPresent, OrderLine, OrderLineCancel, OpRow, Shift } fr
 import { billingContextFrom, settingsFrom } from "../context";
 import { BILL_PRINTER } from "./bill-printer";
 import { checkOf, depsFor, holds, liveLines, need, requireDay, TradingError, isoNow, type ListFn, type TradingCtx } from "./ctx";
+import { newCounterCheck, orderIdOf } from "./orders";
 import { sendKot, ackPrinted } from "./kitchen";
 import { tableLabelOf } from "./kitchen";
-import { newCounterCheck } from "./orders";
 
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
@@ -267,14 +267,16 @@ export async function printBill(ctx: TradingCtx, billId: string, duplicate?: { c
   await ctx.print.flush();
 }
 
-/** Reprint a bill: same number, marked DUPLICATE with the copy count (AC 119). The count is a device-local mark. */
+/**
+ * Reprint a bill: same number, marked DUPLICATE with the copy count (AC 119). Each reprint is an audit row (`bill.reprint`,
+ * entity `bill_reprint`): the first reprint is row 1 and prints as Copy 2, because the original print is copy 1.
+ */
 export async function reprintBill(ctx: TradingCtx, billId: string): Promise<number> {
   need(ctx, "bill.reprint");
-  const key = `reprint-${billId}`;
-  const copy = ((ctx.data.snapshot().get(`_local`, key)?.count as number | undefined) ?? 0) + 2; // the original print is copy 1
-  await ctx.data.putLocal(key, { kind: "reprint", count: copy - 1 });
-  await printBill(ctx, billId, { copy });
-  return copy;
+  const n = ctx.data.snapshot().list<{ bill_id: string }>("bill_reprint").filter((r) => r.bill_id === billId).length + 1;
+  await ctx.data.write({ intent: "bill.reprint", build: (b) => [{ e: "bill_reprint", id: b.newId(), k: "insert", f: { bill_id: billId, copy_no: n, mode: "printed" } }] });
+  await printBill(ctx, billId, { copy: n + 1 });
+  return n + 1;
 }
 
 /** Take payment on an issued, not fully paid bill (payment.record). */
@@ -401,3 +403,77 @@ export async function bookEntry(ctx: TradingCtx, input: ManualEntryInput): Promi
 }
 
 export { newCounterCheck, ackPrinted };
+
+// ---- Refund, credit and reopen -----------------------------------------------------------------------------------
+
+/**
+ * Refund a payment (RS19, payment.refund): money returned for a recorded payment; it never changes the bill (use a credit note
+ * for that). At most what was paid, less earlier refunds. Needs `payment.refund` or a manager's approval. A cash refund opens
+ * the drawer and lowers the shift's expected cash.
+ */
+export async function refundPayment(ctx: TradingCtx, o: { paymentId: string; amountPaise: number; reasonCodeId: string; approvalId?: string }): Promise<{ refundId: string }> {
+  need(ctx, "payment.refund", o.approvalId);
+  const list: ListFn = (e) => ctx.data.snapshot().list(e);
+  const pay = (list("payment") as unknown as PaymentRow[]).find((p) => p.id === o.paymentId);
+  if (!pay) throw new TradingError("not_found", o.paymentId);
+  const refunded = (list("refund") as unknown as Array<{ payment_id?: string; amount_paise: number }>).filter((r) => r.payment_id === pay.id).reduce((s, r) => s + r.amount_paise, 0);
+  if (!Number.isInteger(o.amountPaise) || o.amountPaise < 1 || o.amountPaise + refunded > pay.amount_paise) throw new TradingError("refused", "a refund cannot be more than what was paid");
+  const date = requireDay(list);
+  const refundId = ctx.newId();
+  await ctx.data.write({
+    intent: "payment.refund",
+    ...(o.approvalId ? { approval: o.approvalId } : {}),
+    build: () => [{ e: "refund", id: refundId, k: "insert", f: { bill_id: pay.bill_id, payment_id: pay.id, amount_paise: o.amountPaise, tender: pay.tender, reason_code_id: o.reasonCodeId, business_date: date } }],
+  });
+  if (pay.tender === "cash") await ctx.print.openDrawer().catch(() => undefined);
+  return { refundId };
+}
+
+const LINE_FIELDS = ["item_id", "variant_id", "variant_name", "name", "kitchen_name", "category_id", "category_name", "unit_price_paise", "modifier_delta_paise", "modifiers_text", "note", "seat_no", "tax_class", "hsn_sac", "station_code", "discount_kind", "discount_value", "discount_reason_code_id", "comp", "comp_reason_code_id"] as const;
+
+/**
+ * Credit and reopen (RS19): the correction for an invoice issued by mistake and not yet paid. A full credit note, then a new
+ * open check with the same items, so the table or counter order can be billed again. Two ops, in this order: if the app stops
+ * between them the credit note stands and the manager sees an uncredited-but-empty table, never a bill without its credit.
+ * Refused on a bill with payments (refund those first).
+ */
+export async function creditAndReopen(ctx: TradingCtx, o: { billId: string; reasonCodeId: string; approvalId?: string }): Promise<{ credit: string; checkId: string }> {
+  need(ctx, "bill.credit_note.create", o.approvalId);
+  const list0: ListFn = (e) => ctx.data.snapshot().list(e);
+  const original = loadOriginal(list0, o.billId);
+  if (paidOf(list0, o.billId) > 0) throw new TradingError("refused", "a paid bill cannot be reopened: refund the payments first");
+  if (!original.bill.check_id) throw new TradingError("refused", "no check to reopen");
+  const check = checkOf(list0, original.bill.check_id);
+  const kept = liveLines(list0, check.id);
+  const modifiers = (list0("order_line_modifier") as unknown as Array<{ order_line_id: string; modifier_id: string; name: string; price_delta_paise: number }>).filter((m) => kept.some((l) => l.id === m.order_line_id));
+  const cn = await creditNote(ctx, { billId: o.billId, reasonCodeId: o.reasonCodeId, refundTender: "adjusted", ...(o.approvalId ? { approvalId: o.approvalId } : {}) });
+  let checkId: string;
+  let orderId: string | undefined;
+  if (check.order_type === "dine_in" && check.seating_id) {
+    checkId = ctx.newId();
+    const date = requireDay(list0);
+    await ctx.data.write({ intent: "check.create", build: () => [{ e: "check", id: checkId, k: "insert", f: { seating_id: check.seating_id, order_type: "dine_in", label: "Reopened", business_date: date, status: "open" } }] });
+    orderId = orderIdOf((e) => ctx.data.snapshot().list(e), check);
+  } else {
+    checkId = await newCounterCheck(ctx, check.order_type === "takeaway" ? "takeaway" : "counter");
+    const fresh = checkOf((e) => ctx.data.snapshot().list(e), checkId);
+    orderId = orderIdOf((e) => ctx.data.snapshot().list(e), fresh);
+  }
+  if (!orderId) throw new TradingError("not_found", "order");
+  const order = orderId;
+  await ctx.data.write({
+    intent: "order.line.add",
+    build: (b) => {
+      const muts: Mutation[] = [];
+      for (const l of kept) {
+        const id = b.newId();
+        const f: Record<string, unknown> = { order_id: order, check_id: checkId, qty_milli: l.qty_milli, state: "sent" };
+        for (const k of LINE_FIELDS) if ((l as Record<string, unknown>)[k] !== undefined) f[k] = (l as Record<string, unknown>)[k];
+        muts.push({ e: "order_line", id, k: "insert", f });
+        for (const m of modifiers.filter((x) => x.order_line_id === l.id)) muts.push({ e: "order_line_modifier", id: b.newId(), k: "insert", f: { order_line_id: id, modifier_id: m.modifier_id, name: m.name, price_delta_paise: m.price_delta_paise } });
+      }
+      return muts;
+    },
+  });
+  return { credit: cn.number, checkId };
+}

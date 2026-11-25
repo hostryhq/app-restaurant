@@ -67,7 +67,7 @@ export function Bills(): JSX.Element {
               {app.t("bills.paycash")}
             </Button>
           </Show>
-          <Show when={app.can("bill.credit_note.create") || app.can("bill.rebill")}>
+          <Show when={app.can("bill.credit_note.create") || app.can("bill.rebill") || app.can("payment.refund")}>
             <Button variant="secondary" data-testid="bill-credit" onClick={() => app.go({ id: "credit", billId: selected() as string })}>
               {app.t("bills.credit")}
             </Button>
