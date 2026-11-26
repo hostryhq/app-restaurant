@@ -1,0 +1,18 @@
+/* App layout only. Colours, spacing and sizes come from the ui-kit tokens (var(--hy-*)); nothing is hard-coded here. */
+.app-header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hy-space-3); padding: var(--hy-space-2) var(--hy-space-3); }
+.app-header__biz { font-weight: 700; margin-inline-end: auto; }
+.app-chip { background: none; border: 0; padding: 0; min-height: var(--hy-touch-target); cursor: pointer; color: inherit; }
+.app-lock { display: grid; gap: var(--hy-space-4); max-width: 28rem; margin: 0 auto; padding: var(--hy-space-4); }
+.app-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hy-space-3); }
+.app-order__body { display: grid; gap: var(--hy-space-4); }
+@media (min-width: 900px) { .app-order__body { grid-template-columns: 3fr 2fr; } }
+.app-order__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hy-space-3); }
+.app-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--hy-space-2); }
+.app-actions { display: flex; flex-wrap: wrap; gap: var(--hy-space-2); }
+.app-tender__actions { display: flex; flex-wrap: wrap; gap: var(--hy-space-2); margin-block: var(--hy-space-3); }
+.app-modebar { position: sticky; bottom: 0; background: var(--hy-color-surface); padding: var(--hy-space-2); }
+.app-kds { background: var(--hy-color-surface); font-size: var(--hy-font-size-xl); }
+.app-kds__head { display: flex; gap: var(--hy-space-3); align-items: center; }
+.app-kds-alert { border: var(--hy-border-width-strong) solid var(--hy-color-danger); padding: var(--hy-space-2); color: var(--hy-color-danger); }
+.hy-empty-line { color: var(--hy-color-text-muted); }
+section[data-testid] { display: grid; gap: var(--hy-space-3); padding: var(--hy-space-3); align-content: start; }

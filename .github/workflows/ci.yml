@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  pull_request:
+    paths-ignore: ["**.md", "docs/**"]
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ts:
+    uses: hostryhq/.github/.github/workflows/ts-ci.yml@feat/phase1-ci
+    with:
+      package-manager: pnpm
+      # ui-kit and client-core are `link:` dependencies (sibling folders): the workflow checks them out next to this repo,
+      # installs and builds them, then installs this repo. The siblings are pinned to the branches this app needs because their
+      # default branch does not hold the Phase 2 work yet:
+      #   ui-kit      feat/phase2-components  (POS, KDS and shift components)
+      #   client-core feat/phase2-integration (tax, catalog, documents, printing and the sync engine, merged; client-core PR 5)
+      # Tests also read client-core's sources for its sync simulator (src/sync/testkit). When those branches reach main,
+      # drop the @refs.
+      sibling-repos: |
+        ui-kit@feat/phase2-components
+        client-core@feat/phase2-integration
+
+  gitleaks:
+    uses: hostryhq/.github/.github/workflows/gitleaks.yml@main
+
+  # Single status check for the ruleset: "ci / required".
+  required:
+    if: always()
+    needs: [ts, gitleaks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: All required jobs passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done
