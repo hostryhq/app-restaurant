@@ -96,7 +96,11 @@ describe("trading day: three devices, offline all day, a blackout, then reconnec
     await c.signIn("Meena");
     const cn = await T.creditNote(c.rt.ctx, { billId: s3.billId, reasonCodeId: "rc-cn-wrong", refundTender: "cash" });
     expect(cn.number).toBe("C07/2627/000001");
-    const rb = await T.rebillBill(c.rt.ctx, { billId: b1.billId, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-gstin" });
+    const rbInput = { billId: b1.billId, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-gstin" };
+    const rbPlan = T.planRebill(c.rt.ctx, rbInput);
+    const rbAp = await c.rt.identity.approve("m-anand", "4444", "bill.credit_note.create", "m-meena", T.rebillBinding(b1.billId, rbInput.reasonCodeId, rbPlan)!);
+    if (!rbAp.ok) throw new Error("approval");
+    const rb = await T.rebillBill(c.rt.ctx, { ...rbInput, plan: rbPlan, approvalId: rbAp.approvalId });
     expect(rb).toEqual({ credit: "C07/2627/000002", bills: ["A07/2627/000004"] });
     const rebillOp = (await c.rt.engine.opAt({ origin: c.rt.deviceId, stream: OUTLET_STREAM, seq: rows<OpRow>(c.rt, "_op").filter((o) => o.own && o.intent === "bill.rebill.approved")[0]!.seq })) as OpEnvelope;
     expect(rebillOp.docs?.map((d) => d.number)).toEqual(["C07/2627/000002", "A07/2627/000004"]);

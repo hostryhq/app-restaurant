@@ -442,6 +442,10 @@ export async function rebillBill(ctx: TradingCtx, o: RebillInput & { approvalId?
   // withdrawn and the replacement value, or a session that holds bill.credit_note.create itself (ruling 8, P2-H2).
   const plan = o.plan ?? planRebill(ctx, o);
   const approved = plan.approvalReason !== undefined;
+  // After any payment (recorded here or synced from another device) the approval must be cited even when this session holds the
+  // permission: svc-billing raises rebill_after_payment on a group that cites none (soak run 5, S7 / F29).
+  const afterPayment = paidOf((e) => ctx.data.snapshot().list(e), o.billId) > 0;
+  if (afterPayment && !o.approvalId && ctx.session()) throw new TradingError("approval_needed", "bill.rebill after payment needs a manager's approval");
   if (approved && !o.approvalId && ctx.session() && !holds(ctx, "bill.credit_note.create")) throw new TradingError("approval_needed", plan.approvalReason);
   need(ctx, approved ? "bill.credit_note.create" : "bill.rebill", approved ? o.approvalId : undefined);
   // The ids the approval named are the ones the op uses: the group id first, then the credit note row (the approval's target).
@@ -449,9 +453,10 @@ export async function rebillBill(ctx: TradingCtx, o: RebillInput & { approvalId?
   let out!: { credit: string; bills: string[] };
   await ctx.data.write({
     intent: approved ? "bill.rebill.approved" : "bill.rebill",
-    ...(approved && o.approvalId && !holds(ctx, "bill.credit_note.create") ? { approval: o.approvalId } : {}),
+    ...(approved && o.approvalId && (afterPayment || !holds(ctx, "bill.credit_note.create")) ? { approval: o.approvalId } : {}),
     build: (b) => {
       const original = loadOriginal(b.list, o.billId);
+      if (paidOf(b.list, o.billId) > 0 && !o.approvalId) throw new TradingError("approval_needed", "bill.rebill after payment needs a manager's approval");
       const deps = depsFor(b);
       const r = rebill({ ...deps, newId: () => ids.shift() ?? b.newId() }, billingContextFrom(b.list, ctx.outletId, ctx.manualBookCodes), original, replacementsOf(o, original), { reasonCodeId: o.reasonCodeId, previousCredited: previouslyCredited(b.list, o.billId) });
       const replacementTotal = r.bills.reduce((s, x) => s + x.bill.total_paise, 0);

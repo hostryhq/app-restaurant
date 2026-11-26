@@ -23,7 +23,23 @@ const scaled = (f: (q: number) => number) => (o: OriginalBill) => {
 };
 
 describe("re-bill allowance (RM-A11, ruling 8)", () => {
-  it("a cashier cannot re-bill once a payment is recorded; a manager can", async () => {
+  it("F29: after a payment a manager's own session is not enough: the re-bill cites an approval and is bill.rebill.approved", async () => {
+    const w = await world({ members });
+    await w.signIn("Meena");
+    await T.startShift(w.rt.ctx, 0);
+    const bill = await numbered(w, "it-dosa", 2000, true);
+    const input = { billId: bill, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-gstin" };
+    await expect(T.rebillBill(w.rt.ctx, input)).rejects.toMatchObject({ code: "approval_needed" });
+    expect(rows(w.rt, "credit_note")).toHaveLength(0);
+    const plan = T.planRebill(w.rt.ctx, input);
+    const ap = await w.rt.identity.approve("m-anand", "4444", "bill.credit_note.create", "m-meena", T.rebillBinding(bill, input.reasonCodeId, plan)!);
+    if (!ap.ok) throw new Error("approval");
+    await T.rebillBill(w.rt.ctx, { ...input, plan, approvalId: ap.approvalId });
+    const ops = rows<{ intent: string; own: boolean; approval?: string }>(w.rt, "_op");
+    expect(ops.filter((o) => o.intent === "bill.rebill.approved" && o.approval === ap.approvalId)).toHaveLength(1);
+  });
+
+  it("a cashier cannot re-bill once a payment is recorded; a manager needs a cited approval", async () => {
     const w = await world({ members });
     await w.signIn("Asha");
     await T.startShift(w.rt.ctx, 0);
@@ -31,7 +47,7 @@ describe("re-bill allowance (RM-A11, ruling 8)", () => {
     await expect(T.rebillBill(w.rt.ctx, { billId: bill, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-gstin" })).rejects.toMatchObject({ code: "approval_needed" });
     expect(rows(w.rt, "credit_note")).toHaveLength(0);
     await w.signIn("Meena");
-    await expect(T.rebillBill(w.rt.ctx, { billId: bill, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-gstin" })).resolves.toBeDefined();
+    await expect(T.rebillBill(w.rt.ctx, { billId: bill, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-gstin" })).rejects.toMatchObject({ code: "approval_needed" });
   });
 
   it("is counted per shift: the fourth unpaid re-bill needs a manager", async () => {

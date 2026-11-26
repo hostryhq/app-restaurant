@@ -104,11 +104,17 @@ describe("discounts, credit notes, re-bill", () => {
     const total = T.previewCheck((e) => w.rt.data.snapshot().list(e), w.rt.ctx.outletId, c, w.clock.now())!.c.result.total_paise;
     const r = await T.settle(w.rt.ctx, c, { payments: [{ tender: "cash", amount_paise: total }] });
 
-    const ops = rows<{ id: string }>(w.rt, "_op").length;
-    const rb = await T.rebillBill(w.rt.ctx, { billId: r.billId, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-gstin" });
+    // The bill is paid: the owner approves, bound to the plan (F29).
+    const input = { billId: r.billId, gstin: "33ABCDE1234F1Z5", reasonCodeId: "rc-cn-gstin" };
+    const plan = T.planRebill(w.rt.ctx, input);
+    const ap = await w.rt.identity.approve("m-anand", "4444", "bill.credit_note.create", "m-meena", T.rebillBinding(r.billId, input.reasonCodeId, plan)!);
+    if (!ap.ok) throw new Error("approval");
+    const rebillOps = () => rows<{ intent: string }>(w.rt, "_op").filter((o) => !o.intent.startsWith("approval.")).length;
+    const ops = rebillOps();
+    const rb = await T.rebillBill(w.rt.ctx, { ...input, plan, approvalId: ap.approvalId });
     expect(rb.credit).toBe("C07/2627/000001");
     expect(rb.bills).toEqual(["A07/2627/000002"]);
-    expect(rows(w.rt, "_op").length).toBe(ops + 1); // one op: no node sees half of it
+    expect(rebillOps()).toBe(ops + 1); // one op: no node sees half of it
     const bills = rows<Bill>(w.rt, "bill");
     expect(bills).toHaveLength(2);
     expect(bills.find((b) => b.number === "A07/2627/000002")?.total_paise).toBe(total);
